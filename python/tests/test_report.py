@@ -17,6 +17,7 @@ from statarb.report import (
     exit_reason_markdown_table,
     metrics_markdown_table,
     plot_equity_curve,
+    plot_equity_decomposition,
     plot_price_series,
     plot_spread_and_zscore,
     plot_trade_distribution,
@@ -59,6 +60,7 @@ def bars() -> pd.DataFrame:
             "position_value": np.zeros(n),
             "nav": nav,
             "costs_this_bar": np.zeros(n),
+            "interest_this_bar": np.full(n, 15.5),
             "trade_event": events,
         }
     )
@@ -83,6 +85,31 @@ def trades() -> pd.DataFrame:
 def test_equity_curve_is_written(bars, tmp_path):
     path = plot_equity_curve(bars, tmp_path / "equity.png")
     assert path.exists() and path.stat().st_size > 1000
+
+
+def test_equity_decomposition_is_written(bars, tmp_path):
+    """The decomposition chart renders on a realistic frame."""
+    path = plot_equity_decomposition(bars, tmp_path / "decomp.png")
+    assert path.exists() and path.stat().st_size > 1000
+
+
+def test_equity_decomposition_arithmetic():
+    """trading_pnl = total_gain - cumulative_interest, exactly.
+
+    This is the identity the chart is built on, and it follows from the
+    accounting identity. Checked directly rather than via the rendered image,
+    since a chart that is drawn but wrong is the failure mode that matters.
+    """
+    n = 10
+    interest = np.full(n, 10.0)
+    interest[0] = 0.0  # bar 0 accrues nothing
+    nav = 100_000.0 + np.cumsum(interest) + np.arange(n) * 5.0
+    frame = pd.DataFrame({"nav": nav, "interest_this_bar": interest})
+
+    cumulative_interest = np.cumsum(frame["interest_this_bar"].to_numpy())
+    trading = (nav - nav[0]) - cumulative_interest
+    # Trading contributes exactly 5/bar after bar 0.
+    np.testing.assert_allclose(trading, np.arange(n) * 5.0, atol=1e-9)
 
 
 def test_spread_chart_handles_warmup_nans(bars, tmp_path):

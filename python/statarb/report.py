@@ -107,6 +107,95 @@ def plot_equity_curve(bars: pd.DataFrame, out_path: str | Path) -> Path:
     return out_path
 
 
+def plot_equity_decomposition(bars: pd.DataFrame, out_path: str | Path) -> Path:
+    """Separate the equity curve into trading PnL and interest on idle cash.
+
+    Why this chart exists: on a strategy that holds a position only ~24% of
+    bars, accrued interest dominates the NAV path. A plain equity curve then
+    looks like a near-straight line and flatters the strategy badly — the
+    smoothness is the risk-free rate, not the trading.
+
+    Plotting cumulative trading PnL on its own shows what the strategy actually
+    did. It is far choppier, and that is the honest picture.
+
+    ``trading_pnl[t] = nav[t] - nav[0] - cumulative_interest[t]``, which follows
+    directly from the accounting identity in :mod:`statarb.io`.
+    """
+    out_path = Path(out_path)
+    nav = bars["nav"].to_numpy(dtype=float)
+    cumulative_interest = np.cumsum(bars["interest_this_bar"].to_numpy(dtype=float))
+    total_gain = nav - nav[0]
+    trading_pnl = total_gain - cumulative_interest
+
+    fig, (ax_split, ax_trading) = plt.subplots(
+        2,
+        1,
+        figsize=(11, 6.5),
+        sharex=True,
+        gridspec_kw={"height_ratios": [1.3, 1]},
+        layout="constrained",
+    )
+
+    ax_split.plot(
+        bars["date"], total_gain, color=COLOR_EQUITY, linewidth=1.5, label="total gain"
+    )
+    ax_split.plot(
+        bars["date"],
+        cumulative_interest,
+        color=COLOR_NEUTRAL,
+        linewidth=1.2,
+        linestyle="--",
+        label="interest on idle cash",
+    )
+    ax_split.plot(
+        bars["date"],
+        trading_pnl,
+        color=COLOR_ENTRY,
+        linewidth=1.4,
+        label="trading PnL",
+    )
+    ax_split.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.8, alpha=0.6)
+    ax_split.set_ylabel("Cumulative $")
+    ax_split.set_title(
+        "What actually drove the return", loc="left", fontsize=12, fontweight="600"
+    )
+    ax_split.legend(loc="upper left", frameon=False, fontsize=9)
+    _style_axes(ax_split)
+
+    share = (
+        trading_pnl[-1] / total_gain[-1] * 100.0 if abs(total_gain[-1]) > 1e-9 else 0.0
+    )
+    ax_split.annotate(
+        f"trading is {share:.0f}% of the total gain",
+        xy=(0.995, 0.06),
+        xycoords="axes fraction",
+        ha="right",
+        fontsize=9,
+        color=COLOR_ENTRY,
+    )
+
+    # Trading PnL alone, on its own scale — the strategy without the tailwind.
+    ax_trading.plot(bars["date"], trading_pnl, color=COLOR_ENTRY, linewidth=1.2)
+    ax_trading.fill_between(
+        bars["date"], trading_pnl, 0.0, color=COLOR_ENTRY, alpha=0.15
+    )
+    ax_trading.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.8)
+    ax_trading.set_ylabel("Trading PnL ($)")
+    ax_trading.set_xlabel("Date")
+    ax_trading.set_title(
+        "Trading PnL alone (note the scale — this is the real path)",
+        loc="left",
+        fontsize=10,
+        color=COLOR_NEUTRAL,
+    )
+    _style_axes(ax_trading)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
 def plot_spread_and_zscore(
     bars: pd.DataFrame,
     out_path: str | Path,

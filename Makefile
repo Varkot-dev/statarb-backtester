@@ -12,7 +12,7 @@ PYTEST := $(PYTHON) -m pytest
 DUNE := eval $$(opam env) && dune
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-ocaml test-python backtest report clean deps fmt check
+.PHONY: help build test test-ocaml test-python backtest verify report clean deps fmt check all
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -39,10 +39,10 @@ backtest: build ## Run the full pipeline and regenerate every reported number
 backtest-offline: build ## Run the pipeline without the network fetch
 	$(PYTHON) scripts/run_pipeline.py --skip-real-data
 
-report: ## Regenerate the README results section from reports/summary.json
-	$(PYTHON) scripts/generate_readme.py
+verify: ## Check that every number in the README matches the generated artifacts
+	$(PYTHON) scripts/verify_readme.py
 
-all: test backtest report ## Test, backtest, and regenerate the README
+all: test backtest verify ## Test, backtest, and verify the README
 
 check: test ## Alias for `test`, for CI readability
 

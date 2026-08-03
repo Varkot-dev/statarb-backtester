@@ -171,6 +171,11 @@ def process_dataset(dataset: Dataset) -> RunOutcome:
                 REPO_ROOT
             )
         ),
+        "decomposition": str(
+            report.plot_equity_decomposition(
+                bars, out_dir / "equity_decomposition.png"
+            ).relative_to(REPO_ROOT)
+        ),
         "spread": str(
             report.plot_spread_and_zscore(
                 bars, out_dir / "spread_zscore.png"
