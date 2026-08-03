@@ -1,0 +1,24 @@
+# OCaml / dune
+_build/
+*.install
+.merlin
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Generated outputs.
+# The pipeline regenerates everything under reports/ and data/ from scratch via
+# `make backtest`, so committing them would let a stale artifact contradict the
+# code that claims to produce it. The README's numbers are reproduced by running
+# the pipeline, not by reading a checked-in file.
+reports/
+data/raw/
+data/processed/
+
+# macOS
+.DS_Store
