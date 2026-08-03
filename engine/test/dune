@@ -1,0 +1,17 @@
+(test
+ (name test_statarb)
+ (modules
+  test_statarb
+  fixtures
+  test_causal
+  test_rolling
+  test_ols
+  test_metrics
+  test_execution
+  test_lookahead
+  test_properties
+  test_csv_io
+  test_signal)
+ (libraries statarb alcotest qcheck-core qcheck-core.runner)
+ (flags
+  (:standard -w +a-4-9-40-41-42-44-45-70 -warn-error -a)))
