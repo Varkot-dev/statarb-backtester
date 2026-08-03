@@ -89,8 +89,14 @@ def test_nav_identity_holds_in_the_output(cointegrated_csv, tmp_path):
 
 
 @requires_engine
-def test_nav_evolves_only_by_mark_to_market_and_costs(cointegrated_csv, tmp_path):
-    """The accounting identity, re-derived in Python from the audit trail."""
+def test_nav_evolves_only_by_mark_to_market_interest_and_costs(
+    cointegrated_csv, tmp_path
+):
+    """The accounting identity, re-derived in Python from the audit trail.
+
+    NAV moves only through mark-to-market on the position held into the bar,
+    interest accrued on cash, and costs paid. Nothing else.
+    """
     out_dir = tmp_path / "out"
     run_backtest(cointegrated_csv, out_dir)
     bars = read_bars(out_dir / "bars.csv")
@@ -100,7 +106,7 @@ def test_nav_evolves_only_by_mark_to_market_and_costs(cointegrated_csv, tmp_path
     mtm = prev["qty_a"] * (cur["price_a"] - prev["price_a"]) + prev["qty_b"] * (
         cur["price_b"] - prev["price_b"]
     )
-    expected = prev["nav"] + mtm - cur["costs_this_bar"]
+    expected = prev["nav"] + mtm + cur["interest_this_bar"] - cur["costs_this_bar"]
     np.testing.assert_allclose(expected, cur["nav"], atol=1e-6)
 
 

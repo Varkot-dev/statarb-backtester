@@ -105,10 +105,10 @@ def test_read_bars_normalises_optional_fields(tmp_path):
     path = tmp_path / "bars.csv"
     path.write_text(
         "index,date,price_a,price_b,hedge_ratio,spread,zscore,position,qty_a,"
-        "qty_b,cash,position_value,nav,costs_this_bar,trade_event\n"
-        "0,2020-01-01,100.0,50.0,,,,flat,0.0,0.0,100000.0,0.0,100000.0,0.0,\n"
+        "qty_b,cash,position_value,nav,costs_this_bar,interest_this_bar,trade_event\n"
+        "0,2020-01-01,100.0,50.0,,,,flat,0.0,0.0,100000.0,0.0,100000.0,0.0,0.0,\n"
         "1,2020-01-02,101.0,50.5,1.25,0.01,-2.1,long_spread,250.0,-500.0,"
-        "99992.5,0.0,99992.5,7.5,entry:long_spread\n"
+        "99992.5,0.0,99992.5,7.5,15.87,entry:long_spread\n"
     )
     bars = read_bars(path)
     assert np.isnan(bars["zscore"].iloc[0]), "an empty statistic must be NaN, not 0"

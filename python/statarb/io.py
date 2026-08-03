@@ -111,6 +111,7 @@ def read_bars(path: str | Path) -> pd.DataFrame:
         "position_value",
         "nav",
         "costs_this_bar",
+        "interest_this_bar",
         "trade_event",
     }
     missing = expected - set(df.columns)

@@ -35,6 +35,7 @@ from statarb import report  # noqa: E402
 from statarb.cointegration import analyse_pair  # noqa: E402
 from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
+from statarb.significance import assess  # noqa: E402
 
 DATA_DIR = REPO_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
@@ -54,6 +55,7 @@ class RunOutcome:
     is_negative_control: bool
     metrics: dict = field(default_factory=dict)
     cointegration: dict = field(default_factory=dict)
+    significance: dict = field(default_factory=dict)
     charts: dict = field(default_factory=dict)
     error: str = ""
 
@@ -155,6 +157,14 @@ def process_dataset(dataset: Dataset) -> RunOutcome:
     log(f"dataset '{dataset.key}': charts")
     bars = sio.read_bars(out_dir / "bars.csv")
     trades = sio.read_trades(out_dir / "trades.csv")
+
+    # Significance. A point estimate cannot say whether a result is
+    # distinguishable from luck, and on the negative control it is precisely
+    # the difference between "+9% return" and "t=0.86, consistent with zero".
+    outcome.significance = assess(
+        trades, bars["nav"].to_numpy(), bars_per_year=252.0, risk_free_annual=0.04
+    ).to_dict()
+
     outcome.charts = {
         "equity": str(
             report.plot_equity_curve(bars, out_dir / "equity_curve.png").relative_to(
@@ -212,6 +222,10 @@ def process_real_data() -> dict:
             metrics = sio.read_metrics(out_dir / "metrics.csv")
             bars = sio.read_bars(out_dir / "bars.csv")
             trades = sio.read_trades(out_dir / "trades.csv")
+            significance = assess(
+                trades, bars["nav"].to_numpy(), bars_per_year=252.0,
+                risk_free_annual=0.04,
+            ).to_dict()
             charts = {
                 "equity": str(
                     report.plot_equity_curve(
@@ -239,6 +253,7 @@ def process_real_data() -> dict:
                     "end": frame["date"].iloc[-1],
                     "cointegration": stats.to_dict(),
                     "metrics": metrics,
+                    "significance": significance,
                     "charts": charts,
                 }
             )
@@ -277,8 +292,19 @@ def main() -> int:
             return 1
         outcomes.append(outcome)
 
-    # Sensitivity sweep on the primary dataset.
+    # The same primary dataset run WITHOUT crediting interest on idle cash, so
+    # the README can quantify how much of the reported Sharpe is an artifact of
+    # that convention rather than of the strategy. See
+    # Config.accrue_cash_interest for why the credited version is the coherent
+    # comparison.
     primary = SYNTHETIC_DATASETS[0]
+    log(f"'{primary.key}': no-cash-interest comparison run")
+    no_interest_dir = REPORTS_DIR / f"{primary.key}_no_cash_interest"
+    run_engine(
+        RAW_DIR / f"{primary.key}.csv", no_interest_dir, ["--no-cash-interest"]
+    )
+    no_interest_metrics = sio.read_metrics(no_interest_dir / "metrics.csv")
+
     log(f"parameter sweep on '{primary.key}'")
     sweep_csv = REPORTS_DIR / "sweep.csv"
     run_sweep(RAW_DIR / f"{primary.key}.csv", sweep_csv, primary.key)
@@ -291,6 +317,11 @@ def main() -> int:
 
     summary = {
         "synthetic": [asdict(o) for o in outcomes],
+        "cash_interest_comparison": {
+            "dataset": primary.key,
+            "with_interest": outcomes[0].metrics,
+            "without_interest": no_interest_metrics,
+        },
         "sweep_csv": str(sweep_csv.relative_to(REPO_ROOT)),
         "real_data": real,
     }
@@ -308,11 +339,24 @@ def main() -> int:
         marker = "  [NEGATIVE CONTROL]" if outcome.is_negative_control else ""
         print(f"\n{outcome.title}{marker}")
         m = outcome.metrics
+        sig = outcome.significance
+        interest = m.get("total_interest", 0.0)
+        trading = m.get("net_pnl", 0.0) - interest
         print(
-            f"  Sharpe {m.get('sharpe_ratio', float('nan')):+.4f}   "
+            f"  Sharpe {m.get('sharpe_ratio', float('nan')):+.4f} "
+            f"[95% CI {sig.get('sharpe_ci_low', float('nan')):+.2f}, "
+            f"{sig.get('sharpe_ci_high', float('nan')):+.2f}]   "
             f"max DD {m.get('max_drawdown', float('nan')) * 100:+.2f}%   "
-            f"trades {int(m.get('n_trades', 0))}   "
-            f"total return {m.get('total_return', float('nan')) * 100:+.2f}%"
+            f"trades {int(m.get('n_trades', 0))}"
+        )
+        print(
+            f"  PnL: trading {trading:+,.0f} + interest on idle cash "
+            f"{interest:+,.0f} = {m.get('net_pnl', 0.0):+,.0f}"
+        )
+        print(
+            f"  per-trade t-stat {sig.get('t_statistic', float('nan')):+.3f}, "
+            f"p={sig.get('p_value', float('nan')):.3f} -> "
+            f"{'SIGNIFICANT' if sig.get('is_significant') else 'NOT significant'}"
         )
         c = outcome.cointegration
         if "true_beta" in c:
@@ -329,15 +373,28 @@ def main() -> int:
             f"-> {'COINTEGRATED' if c['is_cointegrated'] else 'NOT cointegrated'}"
         )
     print()
+    print("Cash-interest convention (primary dataset):")
+    print(
+        f"  interest credited on idle cash: Sharpe "
+        f"{outcomes[0].metrics.get('sharpe_ratio', float('nan')):+.4f}"
+    )
+    print(
+        f"  interest NOT credited:          Sharpe "
+        f"{no_interest_metrics.get('sharpe_ratio', float('nan')):+.4f}"
+    )
+    print()
     if real.get("skipped"):
         print("Real data: skipped (--skip-real-data)")
     elif real["available"]:
         print(f"Real data: {len(real['results'])} pair(s) succeeded")
         for r in real["results"]:
+            sg = r.get("significance", {})
             print(
                 f"  {r['pair']:>10}  Sharpe {r['metrics'].get('sharpe_ratio', float('nan')):+.4f}  "
                 f"max DD {r['metrics'].get('max_drawdown', float('nan')) * 100:+.2f}%  "
-                f"trades {int(r['metrics'].get('n_trades', 0))}"
+                f"trades {int(r['metrics'].get('n_trades', 0)):3d}  "
+                f"t={sg.get('t_statistic', float('nan')):+.2f} "
+                f"p={sg.get('p_value', float('nan')):.3f}"
             )
     else:
         print("Real data: UNAVAILABLE")
