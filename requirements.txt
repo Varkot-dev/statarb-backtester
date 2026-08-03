@@ -1,0 +1,16 @@
+# Python dependencies.
+#
+# Minimum versions are pinned rather than exact versions: the pipeline's
+# reproducibility comes from seeding numpy's `default_rng` (whose stream is
+# stable across versions by policy), not from freezing the dependency tree.
+numpy>=1.26
+pandas>=2.0
+statsmodels>=0.14
+matplotlib>=3.8
+
+# Optional: real market data. The pipeline degrades gracefully when this is
+# missing or when the network is unavailable, and says so in its output.
+yfinance>=0.2.40
+
+# Test-only.
+pytest>=8.0
