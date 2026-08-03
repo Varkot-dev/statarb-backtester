@@ -105,11 +105,12 @@ let test_config ?(hedge_window = 20) ?(zscore_window = 20)
     ?(stop_loss_threshold = 3.5) ?(max_holding_bars = 30)
     ?(commission_bps = 1.0) ?(slippage_bps = 2.0) ?(initial_capital = 100_000.)
     ?(capital_per_trade_frac = 0.25) ?(bars_per_year = 252.)
-    ?(risk_free_rate = 0.04) () : Config.t =
+    ?(risk_free_rate = 0.04) ?(accrue_cash_interest = true) () : Config.t =
   match
     Config.create ~hedge_window ~zscore_window ~entry_threshold ~exit_threshold
       ~stop_loss_threshold ~max_holding_bars ~commission_bps ~slippage_bps
       ~initial_capital ~capital_per_trade_frac ~bars_per_year ~risk_free_rate
+      ~accrue_cash_interest ()
   with
   | Ok c -> c
   | Error e -> failwith ("test_config invalid: " ^ string_of_error e)

@@ -179,27 +179,35 @@ let test_nav_reconciles_every_bar () =
         (r.r_cash +. r.r_position_value) r.r_nav)
     bars;
   (* Identity 2: NAV changes only through mark-to-market on the position held
-     into the bar, and costs paid in the bar. Reconstructed here from the
-     previous bar's signed quantities and the price change. *)
+     into the bar, interest accrued on cash, and costs paid in the bar.
+     Reconstructed here from the previous bar's signed quantities and the price
+     change. *)
   for i = 1 to Array.length bars - 1 do
     let prev = bars.(i - 1) and cur = bars.(i) in
     let mtm =
       (prev.r_qty_a *. (cur.r_price_a -. prev.r_price_a))
       +. (prev.r_qty_b *. (cur.r_price_b -. prev.r_price_b))
     in
-    let expected = prev.r_nav +. mtm -. cur.r_costs_this_bar in
+    let expected =
+      prev.r_nav +. mtm +. cur.r_interest_this_bar -. cur.r_costs_this_bar
+    in
     Alcotest.(check (float 1e-6))
       (Printf.sprintf "NAV evolution at bar %d (%s)" i cur.r_date)
       expected cur.r_nav
   done
 
-(** With zero costs, total NAV change must equal the sum of gross trade PnL —
-    no money appears or vanishes outside the trades.
+(** {b Conservation of money.} Every dollar of NAV change is accounted for by
+    either a trade or interest — nothing appears or vanishes in between.
 
-    The final bar's forced liquidation is included in the trade list, so the
-    two should agree exactly. *)
+    Run with interest disabled so the identity reduces to the cleanest possible
+    statement (NAV change = sum of trade PnL); the companion test below then
+    checks the identity with interest on. Splitting them means a failure points
+    at which term is wrong rather than at the sum. *)
 let test_zero_cost_nav_equals_sum_of_trade_pnl () =
-  let cfg = Fixtures.zero_cost_config () in
+  let cfg =
+    Fixtures.test_config ~commission_bps:0. ~slippage_bps:0.
+      ~accrue_cash_interest:false ()
+  in
   let series =
     Fixtures.cointegrated ~n:600 ~seed:55 ~beta:1.0 ~half_life:10.
       ~sigma_spread:0.03 ~sigma_common:0.01
@@ -210,8 +218,33 @@ let test_zero_cost_nav_equals_sum_of_trade_pnl () =
     List.fold_left (fun a (t : trade) -> a +. t.pnl_net) 0. res.trades
   in
   Alcotest.(check bool) "some trades occurred" true (List.length res.trades > 0);
+  Alcotest.(check (float 0.)) "no interest was accrued" 0.
+    res.metrics.total_interest;
   Alcotest.(check (float 1e-6))
-    "NAV change equals the sum of net trade PnL at zero cost" nav_change sum_pnl
+    "NAV change equals the sum of net trade PnL at zero cost and zero interest"
+    nav_change sum_pnl
+
+(** The same conservation law with interest on: NAV change is trade PnL plus
+    interest, exactly. *)
+let test_nav_change_equals_trade_pnl_plus_interest () =
+  let cfg =
+    Fixtures.test_config ~commission_bps:0. ~slippage_bps:0.
+      ~risk_free_rate:0.04 ()
+  in
+  let series =
+    Fixtures.cointegrated ~n:600 ~seed:55 ~beta:1.0 ~half_life:10.
+      ~sigma_spread:0.03 ~sigma_common:0.01
+  in
+  let res = Fixtures.get_ok (Backtest.run cfg series) in
+  let nav_change = res.metrics.final_nav -. res.metrics.initial_nav in
+  let sum_pnl =
+    List.fold_left (fun a (t : trade) -> a +. t.pnl_net) 0. res.trades
+  in
+  Alcotest.(check bool) "interest was accrued" true
+    (res.metrics.total_interest > 0.);
+  Alcotest.(check (float 1e-6))
+    "NAV change equals trade PnL plus interest" nav_change
+    (sum_pnl +. res.metrics.total_interest)
 
 (** Costs strictly reduce net PnL relative to gross. *)
 let test_costs_reduce_pnl () =
@@ -289,6 +322,94 @@ let test_position_is_always_flat_or_single () =
           (r.r_qty_a = 0. && r.r_qty_b = 0.))
     res.bars
 
+(** {1 Cash interest accrual}
+
+    Idle cash earns the risk-free rate. Without this, a strategy that is flat
+    most of the time is charged a risk-free hurdle on its whole NAV while
+    earning nothing on the cash it holds, and the resulting Sharpe measures how
+    often it was flat rather than whether it had an edge. *)
+
+(** Interest is credited on cash only, at the geometrically de-annualized rate.
+
+    $100,000 at 4% annual over one bar of 252:
+    rf_bar = 1.04^(1/252) - 1 = 1.55654e-4, so interest = $15.5654. *)
+let test_interest_is_credited_on_cash () =
+  let cfg = Fixtures.test_config ~risk_free_rate:0.04 () in
+  let p = Portfolio.initial cfg in
+  let p', interest = Portfolio.accrue_interest p cfg in
+  let expected = 100_000. *. (Float.pow 1.04 (1. /. 252.) -. 1.) in
+  Alcotest.(check (float 1e-9)) "one bar of interest" expected interest;
+  Alcotest.(check (float 1e-9)) "cash increased by the interest"
+    (100_000. +. expected) p'.cash
+
+(** De-annualization is geometric, not linear: compounding [rf_bar] over
+    [bars_per_year] must return exactly the annual rate. *)
+let test_interest_compounds_to_the_annual_rate () =
+  let cfg = Fixtures.test_config ~risk_free_rate:0.04 () in
+  let rf_bar = Config.rf_per_bar cfg in
+  Alcotest.(check (float 1e-12))
+    "compounding 252 bars recovers the annual rate" 1.04
+    (Float.pow (1. +. rf_bar) 252.);
+  (* And it differs from the linear shortcut, so a silent switch would fail. *)
+  Alcotest.(check bool) "geometric differs from linear" true
+    (Float.abs (rf_bar -. (0.04 /. 252.)) > 1e-9)
+
+let test_interest_can_be_disabled () =
+  let cfg = Fixtures.test_config ~risk_free_rate:0.04 ~accrue_cash_interest:false () in
+  let p = Portfolio.initial cfg in
+  let p', interest = Portfolio.accrue_interest p cfg in
+  Alcotest.(check (float 0.)) "no interest when disabled" 0. interest;
+  Alcotest.(check (float 0.)) "cash unchanged" 100_000. p'.cash
+
+let test_zero_rate_accrues_nothing () =
+  let cfg = Fixtures.test_config ~risk_free_rate:0. () in
+  let _, interest = Portfolio.accrue_interest (Portfolio.initial cfg) cfg in
+  Alcotest.(check (float 0.)) "no interest at a zero rate" 0. interest
+
+(** With interest on and no trading, NAV must compound at exactly the
+    risk-free rate — the cleanest possible check that the accrual is correct.
+
+    An entry threshold of 100 sigmas is never reached, so the strategy stays
+    flat for the whole sample and NAV is pure interest. *)
+let test_flat_portfolio_compounds_at_the_risk_free_rate () =
+  let cfg =
+    Fixtures.test_config ~entry_threshold:100. ~stop_loss_threshold:200.
+      ~risk_free_rate:0.04 ()
+  in
+  let series =
+    Fixtures.cointegrated ~n:300 ~seed:71 ~beta:1.0 ~half_life:12.
+      ~sigma_spread:0.03 ~sigma_common:0.012
+  in
+  let res = Fixtures.get_ok (Backtest.run cfg series) in
+  Alcotest.(check int) "no trades at an unreachable threshold" 0
+    res.metrics.n_trades;
+  (* 300 bars, of which bar 0 accrues nothing: 299 compounding periods. *)
+  let expected = 100_000. *. Float.pow (1. +. Config.rf_per_bar cfg) 299. in
+  Alcotest.(check (float 1e-6))
+    "a flat portfolio compounds at exactly the risk-free rate" expected
+    res.metrics.final_nav;
+  (* And its Sharpe is therefore ~0: it earns exactly the hurdle, no more. *)
+  Alcotest.(check bool)
+    (Printf.sprintf "Sharpe of a pure-cash portfolio is ~0 (got %.6f)"
+       res.metrics.sharpe_ratio)
+    true
+    (Float.abs res.metrics.sharpe_ratio < 1e-6)
+
+(** Interest appears in the audit trail and sums to the reported total. *)
+let test_interest_is_reported_and_reconciles () =
+  let cfg = Fixtures.test_config ~risk_free_rate:0.04 () in
+  let series =
+    Fixtures.cointegrated ~n:400 ~seed:73 ~beta:1.0 ~half_life:12.
+      ~sigma_spread:0.03 ~sigma_common:0.012
+  in
+  let res = Fixtures.get_ok (Backtest.run cfg series) in
+  let summed =
+    List.fold_left (fun a r -> a +. r.r_interest_this_bar) 0. res.bars
+  in
+  Alcotest.(check bool) "some interest was earned" true (summed > 0.);
+  Alcotest.(check (float 1e-6)) "per-bar interest sums to the reported total"
+    summed res.metrics.total_interest
+
 (** {1 Type-level guarantees}
 
     These do not test runtime behaviour so much as document that the compiler
@@ -361,10 +482,21 @@ let tests =
     ("NAV reconciles every bar (PnL invariant)", `Quick, test_nav_reconciles_every_bar);
     ("zero-cost NAV equals sum of trade PnL", `Quick,
      test_zero_cost_nav_equals_sum_of_trade_pnl);
+    ("NAV change equals trade PnL plus interest", `Quick,
+     test_nav_change_equals_trade_pnl_plus_interest);
     ("costs reduce PnL", `Quick, test_costs_reduce_pnl);
     ("trade PnL decomposition", `Quick, test_trade_pnl_decomposition);
     ("position is always flat or a single direction", `Quick,
      test_position_is_always_flat_or_single);
+    ("interest is credited on cash", `Quick, test_interest_is_credited_on_cash);
+    ("interest compounds to the annual rate", `Quick,
+     test_interest_compounds_to_the_annual_rate);
+    ("interest can be disabled", `Quick, test_interest_can_be_disabled);
+    ("a zero rate accrues nothing", `Quick, test_zero_rate_accrues_nothing);
+    ("a flat portfolio compounds at the risk-free rate", `Quick,
+     test_flat_portfolio_compounds_at_the_risk_free_rate);
+    ("interest is reported and reconciles", `Quick,
+     test_interest_is_reported_and_reconciles);
     ("Qty rejects invalid magnitudes", `Quick, test_qty_rejects_invalid);
     ("Price rejects invalid prices", `Quick, test_price_rejects_invalid);
     ("position has exactly two states", `Quick, test_position_has_exactly_two_states);

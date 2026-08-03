@@ -53,6 +53,26 @@ let gross_exposure (t : t) ~(price_a : float) ~(price_b : float) : float =
   | Flat -> 0.
   | Open p -> Execution.gross_notional p ~price_a ~price_b
 
+(** [accrue_interest t cfg] credits one bar of risk-free interest on the cash
+    balance and returns the updated portfolio together with the interest paid.
+
+    Applied to cash only, never to position value: the legs are already marked
+    to market, and paying interest on them as well would double-count.
+
+    A short position releases cash, so a short-heavy book carries a larger cash
+    balance and earns more interest. That is the correct direction — in reality
+    short-sale proceeds do earn a rebate — though the rate a retail account
+    receives on them is below the risk-free rate, and no borrow fee is charged
+    here. Both simplifications are listed in the README's limitations.
+
+    When [cfg.accrue_cash_interest] is false this is the identity, which is how
+    the README's comparison of the two conventions is produced. *)
+let accrue_interest (t : t) (cfg : Config.t) : t * float =
+  if (not cfg.accrue_cash_interest) || cfg.risk_free_rate = 0. then (t, 0.)
+  else
+    let interest = t.cash *. Config.rf_per_bar cfg in
+    ({ t with cash = t.cash +. interest }, interest)
+
 (** [apply_fill t fill] folds an execution result into the portfolio. *)
 let apply_fill (t : t) (fill : Execution.fill) : t =
   {
@@ -80,17 +100,18 @@ let reconciliation_tolerance = 1e-6
       ~costs_this_bar] verifies the accounting identity for one bar.
 
     The identity: NAV changes only through (a) mark-to-market on positions held
-    {e into} this bar, and (b) costs paid this bar. Opening or closing a
-    position at the current bar's prices is NAV-neutral before costs, because
-    it exchanges cash for position value at the same price.
+    {e into} this bar, (b) interest accrued on cash, and (c) costs paid this
+    bar. Opening or closing a position at the current bar's prices is
+    NAV-neutral before costs, because it exchanges cash for position value at
+    the same price.
 
     [prev_position] is the position held coming {e into} the bar — the one that
     was exposed to this bar's price move. Using the post-trade position here is
     the subtle version of the bug this check exists to catch. *)
 let check_reconciliation ~(prev_nav : float) ~(prev_position : position)
     ~(prev_price_a : float) ~(prev_price_b : float) ~(price_a : float)
-    ~(price_b : float) ~(new_nav : float) ~(costs_this_bar : float) :
-    (unit, string) result =
+    ~(price_b : float) ~(new_nav : float) ~(costs_this_bar : float)
+    ~(interest_this_bar : float) : (unit, string) result =
   let mtm =
     match prev_position with
     | Flat -> 0.
@@ -98,12 +119,12 @@ let check_reconciliation ~(prev_nav : float) ~(prev_position : position)
         Execution.position_value p ~price_a ~price_b
         -. Execution.position_value p ~price_a:prev_price_a ~price_b:prev_price_b
   in
-  let expected = prev_nav +. mtm -. costs_this_bar in
+  let expected = prev_nav +. mtm +. interest_this_bar -. costs_this_bar in
   let diff = Float.abs (expected -. new_nav) in
   if diff <= reconciliation_tolerance then Ok ()
   else
     Error
       (Printf.sprintf
-         "NAV reconciliation failed: expected %.10f (prev %.10f + mtm %.10f - \
-          costs %.10f), got %.10f, diff %.3e"
-         expected prev_nav mtm costs_this_bar new_nav diff)
+         "NAV reconciliation failed: expected %.10f (prev %.10f + mtm %.10f + \
+          interest %.10f - costs %.10f), got %.10f, diff %.3e"
+         expected prev_nav mtm interest_this_bar costs_this_bar new_nav diff)

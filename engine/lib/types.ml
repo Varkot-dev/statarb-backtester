@@ -268,5 +268,6 @@ type bar_record = {
   r_position_value : float;
   r_nav : float;
   r_costs_this_bar : float;
+  r_interest_this_bar : float;  (** Risk-free interest credited on cash. *)
   r_trade_event : string;  (** "" | "entry" | "exit:<reason>" | "flip" *)
 }

@@ -126,6 +126,7 @@ let test_bar_output_round_trips () =
         r_position_value = 0.;
         r_nav = 100000.;
         r_costs_this_bar = 0.;
+        r_interest_this_bar = 0.;
         r_trade_event = "";
       };
       {
@@ -143,6 +144,7 @@ let test_bar_output_round_trips () =
         r_position_value = 0.;
         r_nav = 99992.5;
         r_costs_this_bar = 7.5;
+        r_interest_this_bar = 15.87;
         r_trade_event = "entry:long_spread";
       };
     ]

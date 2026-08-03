@@ -171,13 +171,14 @@ let opt_f (x : float option) : string =
   match x with None -> "" | Some v -> Printf.sprintf "%.10f" v
 
 let bar_header =
-  "index,date,price_a,price_b,hedge_ratio,spread,zscore,position,qty_a,qty_b,cash,position_value,nav,costs_this_bar,trade_event"
+  "index,date,price_a,price_b,hedge_ratio,spread,zscore,position,qty_a,qty_b,cash,position_value,nav,costs_this_bar,interest_this_bar,trade_event"
 
 let bar_row (r : bar_record) : string =
-  Printf.sprintf "%d,%s,%.10f,%.10f,%s,%s,%s,%s,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%s"
+  Printf.sprintf "%d,%s,%.10f,%.10f,%s,%s,%s,%s,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%s"
     r.r_index r.r_date r.r_price_a r.r_price_b (opt_f r.r_hedge_ratio)
     (opt_f r.r_spread) (opt_f r.r_zscore) r.r_position r.r_qty_a r.r_qty_b
-    r.r_cash r.r_position_value r.r_nav r.r_costs_this_bar r.r_trade_event
+    r.r_cash r.r_position_value r.r_nav r.r_costs_this_bar r.r_interest_this_bar
+    r.r_trade_event
 
 let write_bars (path : string) (rows : bar_record list) : (unit, error) result =
   write_lines path (bar_header :: List.map bar_row rows)

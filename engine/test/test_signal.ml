@@ -147,7 +147,7 @@ let test_config_rejects_exit_above_entry () =
     Config.create ~hedge_window:20 ~zscore_window:20 ~entry_threshold:1.0
       ~exit_threshold:2.0 ~stop_loss_threshold:3.0 ~max_holding_bars:10
       ~commission_bps:1. ~slippage_bps:1. ~initial_capital:1000.
-      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0.
+      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0. ()
   with
   | Error (Config_error _) -> ()
   | _ -> Alcotest.fail "exit >= entry should be rejected"
@@ -157,7 +157,7 @@ let test_config_rejects_stop_below_entry () =
     Config.create ~hedge_window:20 ~zscore_window:20 ~entry_threshold:2.0
       ~exit_threshold:0.5 ~stop_loss_threshold:1.5 ~max_holding_bars:10
       ~commission_bps:1. ~slippage_bps:1. ~initial_capital:1000.
-      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0.
+      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0. ()
   with
   | Error (Config_error _) -> ()
   | _ -> Alcotest.fail "stop <= entry should be rejected"
@@ -169,7 +169,7 @@ let test_config_rejects_bad_capital () =
         Config.create ~hedge_window:20 ~zscore_window:20 ~entry_threshold:2.0
           ~exit_threshold:0.5 ~stop_loss_threshold:3.0 ~max_holding_bars:10
           ~commission_bps:1. ~slippage_bps:1. ~initial_capital:cap
-          ~capital_per_trade_frac:frac ~bars_per_year:252. ~risk_free_rate:0.
+          ~capital_per_trade_frac:frac ~bars_per_year:252. ~risk_free_rate:0. ()
       with
       | Error (Config_error _) -> ()
       | _ -> Alcotest.failf "%s should be rejected" label)
@@ -185,7 +185,7 @@ let test_config_rejects_negative_costs () =
     Config.create ~hedge_window:20 ~zscore_window:20 ~entry_threshold:2.0
       ~exit_threshold:0.5 ~stop_loss_threshold:3.0 ~max_holding_bars:10
       ~commission_bps:(-1.) ~slippage_bps:1. ~initial_capital:1000.
-      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0.
+      ~capital_per_trade_frac:0.5 ~bars_per_year:252. ~risk_free_rate:0. ()
   with
   | Error (Config_error _) -> ()
   | _ -> Alcotest.fail "negative commission should be rejected"

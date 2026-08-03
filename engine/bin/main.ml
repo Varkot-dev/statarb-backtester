@@ -44,6 +44,11 @@ COST AND SIZING OPTIONS
 METRIC CONVENTIONS
   --bars-per-year F    annualization factor (252.0)
   --risk-free F        annual risk-free rate as a decimal (0.04)
+  --no-cash-interest   do NOT credit idle cash at the risk-free rate.
+                       Off by default: a part-time strategy that is charged a
+                       risk-free hurdle on its whole NAV but earns nothing on
+                       idle cash reports a Sharpe that mostly measures how
+                       often it was flat. See Config.accrue_cash_interest.
 
 OTHER
   --label STRING       label recorded in sweep output rows
@@ -68,6 +73,7 @@ type opts = {
   mutable bars_per_year : float;
   mutable risk_free : float;
   mutable label : string;
+  mutable no_cash_interest : bool;
   mutable quiet : bool;
 }
 
@@ -90,6 +96,7 @@ let default_opts () =
     bars_per_year = d.bars_per_year;
     risk_free = d.risk_free_rate;
     label = "";
+    no_cash_interest = false;
     quiet = false;
   }
 
@@ -133,6 +140,7 @@ let parse_args (argv : string array) (start : int) : opts =
       | "--bars-per-year" -> o.bars_per_year <- float_of a (need !i a); 2
       | "--risk-free" -> o.risk_free <- float_of a (need !i a); 2
       | "--label" -> o.label <- need !i a; 2
+      | "--no-cash-interest" -> o.no_cash_interest <- true; 1
       | "--quiet" -> o.quiet <- true; 1
       | "-h" | "--help" -> print_string usage; exit 0
       | other -> raise (Bad_usage ("unknown flag: " ^ other))
@@ -149,6 +157,7 @@ let config_of_opts (o : opts) : Config.t =
       ~commission_bps:o.commission_bps ~slippage_bps:o.slippage_bps
       ~initial_capital:o.capital ~capital_per_trade_frac:o.frac
       ~bars_per_year:o.bars_per_year ~risk_free_rate:o.risk_free
+      ~accrue_cash_interest:(not o.no_cash_interest) ()
   with
   | Ok c -> c
   | Error e -> raise (Bad_usage (Types.string_of_error e))
@@ -255,6 +264,7 @@ let cmd_sweep (o : opts) =
                 ~slippage_bps:o.slippage_bps ~initial_capital:o.capital
                 ~capital_per_trade_frac:o.frac ~bars_per_year:o.bars_per_year
                 ~risk_free_rate:o.risk_free
+                ~accrue_cash_interest:(not o.no_cash_interest) ()
             with
             | Error _ -> None
             | Ok cfg -> (

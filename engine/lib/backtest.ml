@@ -77,6 +77,7 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
     let records = ref [] in
     let navs = ref [] in
     let turnover_notional = ref 0. in
+    let total_interest = ref 0. in
     let bars_with_position = ref 0 in
     let n_trading_bars = ref 0 in
     let abort : error option ref = ref None in
@@ -92,6 +93,19 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
       let pa = Price.to_float bar.price_a in
       let pb = Price.to_float bar.price_b in
 
+      (* --- Step 0: accrue one bar of interest on the cash carried into this
+         bar. Bar 0 accrues nothing: no time has elapsed since the account was
+         funded. --- *)
+      let interest_this_bar =
+        if t = 0 then 0.
+        else begin
+          let updated, interest = Portfolio.accrue_interest !portfolio cfg in
+          portfolio := updated;
+          total_interest := !total_interest +. interest;
+          interest
+        end
+      in
+
       (* --- Step 1/2: the position held into this bar is marked at this bar's
          prices, and the accounting identity is checked. --- *)
       let position_into_bar = !portfolio.position in
@@ -102,6 +116,7 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
            ~prev_position:position_into_bar ~prev_price_a:!prev_price_a
            ~prev_price_b:!prev_price_b ~price_a:pa ~price_b:pb
            ~new_nav:nav_before_trades ~costs_this_bar:0.
+           ~interest_this_bar
        with
       | Ok () -> ()
       | Error msg ->
@@ -223,6 +238,7 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
                     Portfolio.position_value !portfolio ~price_a:pa ~price_b:pb;
                   r_nav = nav_after;
                   r_costs_this_bar = fill.cost;
+                  r_interest_this_bar = interest_this_bar;
                   r_trade_event = fill.event;
                 }
               in
@@ -280,7 +296,7 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
             ~trades:(List.rev portfolio_final.trades)
             ~total_costs:portfolio_final.total_costs
             ~turnover_notional:!turnover_notional
-            ~n_trading_bars:!n_trading_bars
+            ~total_interest:!total_interest ~n_trading_bars:!n_trading_bars
             ~bars_with_position:!bars_with_position cfg
         in
         Ok

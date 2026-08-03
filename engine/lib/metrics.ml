@@ -48,6 +48,8 @@ type t = {
   avg_loss : float;
   profit_factor : float;
   total_costs : float;
+  total_interest : float;
+      (** Risk-free interest credited on idle cash over the whole run. *)
   gross_pnl : float;
   net_pnl : float;
   turnover : float;  (** Total traded notional / initial capital. *)
@@ -216,8 +218,9 @@ let calmar ~(annualized_return : float) ~(max_drawdown : float) : float =
 (** [compute ~navs ~trades ~total_costs ~turnover_notional ~n_trading_bars
       ~bars_with_position cfg] assembles the full metric set. *)
 let compute ~(navs : float array) ~(trades : trade list) ~(total_costs : float)
-    ~(turnover_notional : float) ~(n_trading_bars : int)
-    ~(bars_with_position : int) (cfg : Config.t) : (t, error) result =
+    ~(turnover_notional : float) ~(total_interest : float)
+    ~(n_trading_bars : int) ~(bars_with_position : int) (cfg : Config.t) :
+    (t, error) result =
   let open R in
   let n = Array.length navs in
   if n < 2 then Error (Insufficient_data { needed = 2; got = n })
@@ -276,6 +279,7 @@ let compute ~(navs : float array) ~(trades : trade list) ~(total_costs : float)
         profit_factor =
           (if gross_loss < min_volatility then 0. else gross_win /. gross_loss);
         total_costs;
+        total_interest;
         gross_pnl = sum_of (fun t -> t.pnl_gross) trades;
         net_pnl = final_nav -. initial_nav;
         turnover = turnover_notional /. cfg.initial_capital;
@@ -315,6 +319,7 @@ let to_csv_rows (m : t) : (string * string) list =
     f "avg_loss" m.avg_loss;
     f "profit_factor" m.profit_factor;
     f "total_costs" m.total_costs;
+    f "total_interest" m.total_interest;
     f "gross_pnl" m.gross_pnl;
     f "net_pnl" m.net_pnl;
     f "turnover" m.turnover;
