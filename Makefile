@@ -12,7 +12,7 @@ PYTEST := $(PYTHON) -m pytest
 DUNE := eval $$(opam env) && dune
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-ocaml test-python backtest backtest-offline verify report clean deps fmt check all ci
+.PHONY: help build test test-ocaml test-python attack backtest backtest-offline verify report clean deps fmt check all ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -31,7 +31,10 @@ test-ocaml: build ## Run the OCaml test suite
 test-python: build ## Run the Python test suite (integration tests need the engine)
 	$(PYTEST) python/tests -v
 
-test: test-ocaml test-python ## Run both test suites
+attack: build ## Verify the Causal abstraction rejects lookahead at COMPILE time
+	./scripts/attack_causal.sh
+
+test: test-ocaml test-python attack ## Run both suites and the abstraction attacks
 
 backtest: build ## Run the full pipeline and regenerate every reported number
 	$(PYTHON) scripts/run_pipeline.py

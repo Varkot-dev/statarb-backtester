@@ -45,6 +45,12 @@ jobs:
       - name: Run tests
         run: opam exec -- dune test --root engine --force
 
+      # Compile-fail attacks. A normal test cannot assert "this does NOT
+      # compile", so the abstraction boundary that the whole no-lookahead claim
+      # rests on went unguarded until a reviewer broke it in four lines.
+      - name: Attack the Causal abstraction boundary
+        run: ./scripts/attack_causal.sh
+
       - name: Upload the engine binary
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
