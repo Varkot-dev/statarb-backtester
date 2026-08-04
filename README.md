@@ -21,6 +21,11 @@ MIT licensed. **Not investment advice** — this is a research artifact whose ow
 documented conclusion is that the strategy shows no statistically significant
 edge on real market data.
 
+![Every apparent edge, and the test that removed it](reports/honesty_cascade.png)
+
+Every row is a stricter test than the one above it, and each removes the edge
+the row above appeared to find. That sequence is the project.
+
 ---
 
 ## Headline results
@@ -203,6 +208,8 @@ statarb kalman-sweep --prices data/raw/coint_medium.csv --half-life 14.9 --out r
 | 8 | 119 | +0.881 | 53 |
 | 12 | 178 | +0.947 | 54 |
 
+![One law, two estimators](reports/memory_law.png)
+
 **The direction survives: longer memory is monotonically better**, +0.468 to
 +0.947 across the range, on identical data with an identical signal definition
 and identical costs. So the constraint is not about windows as such — a
@@ -254,6 +261,10 @@ statarb calibrate --prices data/raw/coint_medium.csv --out reports/leakage_calib
 ```
 
 ![Leakage calibration](reports/leakage_calibration.png)
+
+Read as a lookup table — *if your backtest looks like this, you have that bug*:
+
+![The diagnostic signature](reports/leakage_signature.png)
 
 **The result contradicted the hypothesis.** I expected any lookahead to inflate
 Sharpe. It depends entirely on which leak you have, and the two run in opposite

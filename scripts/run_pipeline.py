@@ -536,16 +536,22 @@ def main() -> int:
     if walk_forward_rows:
         import statistics as _stats
 
-        mean_oos = _stats.fmean(r["oos_sharpe"] for r in walk_forward_rows)
-        n_kept = len(walk_forward_rows)
+        mean_oos = float(walk_forward_summary["mean_oos_sharpe"])
+        se_oos = float(walk_forward_summary.get("se_mean_oos_sharpe", float("nan")))
+        n_kept = int(walk_forward_summary["n_kept"])
         n_dropped = int(walk_forward_summary.get("n_dropped", 0))
+        # The standard error is passed so the bar carries its own uncertainty.
+        # This figure's whole point is that a 2-pair mean is swamped by noise;
+        # drawing it as a bare bar would assert far more than the data supports.
         cascade_stages.append(
             (
                 "Walk-forward, out-of-sample",
                 f"window chosen in-sample, evaluated on untouched data\n"
-                f"{n_kept} pair(s) evaluated, {n_dropped} dropped as untradeable",
-                float(mean_oos),
+                f"{n_kept} of {n_kept + n_dropped} pairs survived — "
+                f"SE ±{se_oos:.2f} swamps the mean",
+                mean_oos,
                 "killed",
+                se_oos,
             )
         )
 

@@ -594,10 +594,20 @@ def plot_honesty_cascade(
 
     n = len(stages)
     y_positions = list(range(n - 1, -1, -1))
-    values = [v for _, _, v, _ in stages]
+    values = [stage[2] for stage in stages]
     span = max(abs(min(values)), abs(max(values)), 0.1)
 
-    for y, (label, detail, value, verdict) in zip(y_positions, stages):
+    for y, stage in zip(y_positions, stages):
+        label, detail, value, verdict = stage[:4]
+        # An optional 5th element is the standard error of the value. Where a
+        # figure is swamped by its own uncertainty — as the walk-forward mean is
+        # — drawing the bar without the error bar states it far too confidently.
+        std_err = stage[4] if len(stage) > 4 else None
+        if std_err is not None and np.isfinite(std_err) and std_err > 0:
+            ax.errorbar(
+                value, y, xerr=std_err, fmt="none", ecolor=COLOR_NEUTRAL,
+                elinewidth=1.4, capsize=4, capthick=1.4, zorder=6,
+            )
         killed = verdict != "alpha"
         # Hatching, not hue, is what survives a greyscale print.
         ax.barh(
@@ -977,9 +987,35 @@ def plot_leakage_signature(calibration: pd.DataFrame, out_path: str | Path) -> P
 
         shift_delta = float(shift[column].iloc[-1] - shift[column].iloc[0])
         filt_delta = float(filt[column].iloc[-1] - filt[column].iloc[0])
-        for delta, colour, frac in (
-            (shift_delta, COLOR_DRAWDOWN, 0.72),
-            (filt_delta, COLOR_ENTRY, 0.34),
+        # Anchor each marker to its OWN series' final value rather than to a
+        # fixed fraction of the axis. The two curves cross between panels — in
+        # the Sharpe panel timing-shift ends below outcome-filter, in the
+        # trade-count panel above — so fixed positions label the wrong curve on
+        # some rows.
+        # Where the two series end close together the labels would overlap, so
+        # they are separated by a fraction of the panel's own range. Anchoring
+        # to the data keeps each label beside its curve; this keeps both
+        # readable when the curves converge.
+        # Apply the row's own scale factor. The win-rate panel plots
+        # win_rate * 100, so anchoring to the raw 0-1 column put both markers
+        # near y=0 on a 0-80 axis and they overlapped — a unit mismatch of
+        # exactly the kind this project keeps finding elsewhere.
+        shift_end = float(shift[column].iloc[-1]) * scale
+        filt_end = float(filt[column].iloc[-1]) * scale
+        span = float(
+            max(shift[column].max(), filt[column].max())
+            - min(shift[column].min(), filt[column].min())
+        ) * scale
+        if span > 0 and abs(shift_end - filt_end) < 0.10 * span:
+            nudge = 0.06 * span
+            if shift_end >= filt_end:
+                shift_end, filt_end = shift_end + nudge, filt_end - nudge
+            else:
+                shift_end, filt_end = shift_end - nudge, filt_end + nudge
+
+        for delta, colour, end_value in (
+            (shift_delta, COLOR_DRAWDOWN, shift_end),
+            (filt_delta, COLOR_ENTRY, filt_end),
         ):
             if abs(delta) < 1e-9:
                 glyph, label_colour = "→ flat", COLOR_NEUTRAL
@@ -989,13 +1025,14 @@ def plot_leakage_signature(calibration: pd.DataFrame, out_path: str | Path) -> P
                 glyph, label_colour = "▼ down", colour
             ax.annotate(
                 glyph,
-                xy=(112.0, frac),
-                xycoords=ax.get_xaxis_transform(),
+                xy=(112.0, end_value),
+                xycoords=("data", "data"),
                 ha="left",
                 va="center",
                 fontsize=9.5,
                 fontweight="600",
                 color=label_colour,
+                annotation_clip=False,
             )
 
     axes[0].annotate(

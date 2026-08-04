@@ -74,8 +74,17 @@ the best of :math:`N` trials under the null of no skill. On 2,515 bars with
 observed value of **+0.654**. Indistinguishable.
 
 The honest test is walk-forward: estimate the half-life on the first 60% of the
-sample, set the window from it, and evaluate on the untouched remainder. That
-gives a mean out-of-sample Sharpe of **-0.029**.
+sample, set the window from it, and evaluate on the untouched remainder.
+
+That answer is **not a single number**, which is the point. The drop rule
+discards any pair whose half-life demands a window longer than the
+out-of-sample segment supports, and only two of five survive. The surviving mean
+carries a standard error of the same order as the mean itself, so it cannot
+distinguish an edge from noise in either direction. See
+:class:`WalkForwardSummary`, which reports the mean with its standard error and
+the drop count rather than the mean alone — an earlier version of this docstring
+quoted a bare figure that had since drifted from what the pipeline produced,
+which is exactly the failure the summary type exists to prevent.
 
 So: the methodological finding is real and reproducible. The alpha is not.
 That distinction is the entire point.
@@ -441,8 +450,8 @@ class WalkForwardSummary:
     Second, and more decisively, the survivors are too few to support a
     conclusion. Measured on 250 independent random walks — data with no edge at
     all — the rule keeps **3.6%**, and the standard error of the mean over
-    that many survivors is roughly 0.23. A reported mean of -0.029 is
-    indistinguishable from anything in [-0.5, +0.4].
+    that many survivors is roughly 0.23, so a two-pair mean is indistinguishable
+    from anything in a band about a full Sharpe point wide.
 
     So this type reports the mean, its standard error, the number kept, the
     number dropped, and a verdict that refuses to over-read a small sample.
