@@ -22,6 +22,13 @@ USAGE
   statarb sweep    --prices <in.csv> --out <sweep.csv> [options]
   statarb calibrate --prices <in.csv> --out <calibration.csv> [options]
   statarb kalman-sweep --prices <in.csv> --out <sweep.csv> [options]
+  statarb kalman-rmse --out <rmse.csv> [--seeds N]
+
+KALMAN-RMSE
+  Kalman vs rolling OLS at tracking a KNOWN drifting hedge ratio, reported as a
+  DISTRIBUTION across seeds rather than a single run. A one-seed figure for a
+  quantity this variable is a cherry-pick; the README previously quoted 62%,
+  which sits near the top of the distribution rather than at its centre.
 
 KALMAN-SWEEP
   Tests whether the window/half-life law generalises to a WINDOWLESS estimator.
@@ -94,6 +101,7 @@ type opts = {
   mutable risk_free : float;
   mutable label : string;
   mutable half_life : float;
+  mutable seeds : int;
   mutable no_cash_interest : bool;
   mutable quiet : bool;
 }
@@ -118,6 +126,7 @@ let default_opts () =
     risk_free = d.risk_free_rate;
     label = "";
     half_life = 20.0;
+    seeds = 30;
     no_cash_interest = false;
     quiet = false;
   }
@@ -163,6 +172,7 @@ let parse_args (argv : string array) (start : int) : opts =
       | "--risk-free" -> o.risk_free <- float_of a (need !i a); 2
       | "--label" -> o.label <- need !i a; 2
       | "--half-life" -> o.half_life <- float_of a (need !i a); 2
+      | "--seeds" -> o.seeds <- int_of a (need !i a); 2
       | "--no-cash-interest" -> o.no_cash_interest <- true; 1
       | "--quiet" -> o.quiet <- true; 1
       | "-h" | "--help" -> print_string usage; exit 0
@@ -266,6 +276,96 @@ let sweep_grid =
         (fun e -> List.filter_map (fun x -> if x < e then Some (w, e, x) else None) exits)
         entries)
     windows
+
+(** Kalman vs rolling OLS tracking error, across seeds.
+
+    Reports the distribution, not a point. The quantity varies enough between
+    seeds (measured: 6.8% to 64.9%) that any single run is a cherry-pick, and
+    the README's original 62% was near the maximum. Generating the spread is the
+    only honest way to state the comparison. *)
+let cmd_kalman_rmse (o : opts) =
+  let out = require "--out" o.out in
+  let n = 1500 in
+  let rmse_for seed =
+    let g = ref (seed land 0x3FFFFFFF) in
+    let next () =
+      g := ((1103515245 * !g) + 12345) land 0x3FFFFFFF;
+      float_of_int !g /. 1073741824.
+    in
+    let gauss () =
+      let u = Float.max 1e-12 (next ()) in
+      sqrt (-2. *. log u) *. cos (2. *. Float.pi *. next ())
+    in
+    (* A hedge ratio drifting linearly 1.0 -> 1.6: the regime where rolling OLS
+       is known to lag, and the only regime where the comparison is meaningful. *)
+    let true_beta i =
+      1.0 +. (0.6 *. float_of_int i /. float_of_int n)
+    in
+    let phi = exp (-.log 2. /. 15.) in
+    let c = ref 0. and sp = ref 0. in
+    let series =
+      Array.init n (fun i ->
+          c := !c +. (0.01 *. gauss ());
+          sp := (phi *. !sp) +. (0.03 *. sqrt (1. -. (phi *. phi)) *. gauss ());
+          let la = log 100. +. (true_beta i *. !c) +. !sp in
+          let lb = log 50. +. !c in
+          match (Types.Price.of_float (exp la), Types.Price.of_float (exp lb)) with
+          | Ok a, Ok b ->
+              { Types.date = Printf.sprintf "d%05d" i; price_a = a; price_b = b }
+          | _ -> failwith "kalman-rmse: generated an invalid price")
+    in
+    let log_a =
+      Array.map (fun b -> log (Types.Price.to_float b.Types.price_a)) series
+    in
+    let log_b =
+      Array.map (fun b -> log (Types.Price.to_float b.Types.price_b)) series
+    in
+    let filtered = Kalman.run Kalman.default_params series in
+    let eo = ref 0. and ek = ref 0. and count = ref 0 in
+    for i = 100 to n - 1 do
+      let truth = true_beta i in
+      (match
+         Ols.fit_window ~y:(Causal.create log_a i) ~x:(Causal.create log_b i) 60
+       with
+      | Ok f ->
+          eo := !eo +. ((f.Ols.beta -. truth) ** 2.);
+          incr count
+      | Error _ -> ());
+      ek :=
+        !ek +. ((filtered.(i).Kalman.new_state.Kalman.beta -. truth) ** 2.)
+    done;
+    let nf = float_of_int !count in
+    (sqrt (!eo /. nf), sqrt (!ek /. nf))
+  in
+  let n_seeds = if o.seeds > 0 then o.seeds else 30 in
+  let improvements =
+    Array.init n_seeds (fun i ->
+        let ols, kalman = rmse_for (1000 + (i * 137)) in
+        (1. -. (kalman /. ols)) *. 100.)
+  in
+  Array.sort compare improvements;
+  let pct q =
+    improvements.(int_of_float (q *. float_of_int (n_seeds - 1)))
+  in
+  let rows =
+    [
+      Printf.sprintf "min,%.1f" improvements.(0);
+      Printf.sprintf "p25,%.1f" (pct 0.25);
+      Printf.sprintf "median,%.1f" (pct 0.50);
+      Printf.sprintf "p75,%.1f" (pct 0.75);
+      Printf.sprintf "max,%.1f" improvements.(n_seeds - 1);
+      Printf.sprintf "n_seeds,%d" n_seeds;
+    ]
+  in
+  (match Csv_io.write_lines out ("statistic,rmse_improvement_pct" :: rows) with
+  | Error e -> die ("writing kalman rmse: " ^ Types.string_of_error e)
+  | Ok () -> ());
+  if not o.quiet then begin
+    Printf.printf "\n=== Kalman vs rolling OLS: tracking a drifting beta ===\n\n";
+    Printf.printf "  RMSE improvement over %d seeds:\n" n_seeds;
+    List.iter (fun r -> Printf.printf "    %s\n" r) rows
+  end;
+  Printf.printf "wrote %s\n" out
 
 (** Emit the Kalman memory sweep.
 
@@ -435,6 +535,7 @@ let () =
     | "sweep" -> cmd_sweep (parse_args argv 2)
     | "calibrate" -> cmd_calibrate (parse_args argv 2)
     | "kalman-sweep" -> cmd_kalman_sweep (parse_args argv 2)
+    | "kalman-rmse" -> cmd_kalman_rmse (parse_args argv 2)
     | "-h" | "--help" -> print_string usage
     | other ->
         prerr_endline ("error: unknown subcommand: " ^ other);

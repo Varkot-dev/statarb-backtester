@@ -244,6 +244,21 @@ def main() -> int:
                 f"{mean_oos:+.3f}".replace("-", "−"), "walk-forward mean OOS Sharpe"
             )
 
+    # ------------------------------------------------------- kalman RMSE
+    if "kalman_rmse" in summary:
+        r = summary["kalman_rmse"]
+        for key in ("min", "p25", "median", "p75", "max"):
+            c.contains(f"{r[key]:.1f}%", f"kalman RMSE {key}")
+        c.contains(f"{int(r['n_seeds'])} seeds", "kalman RMSE seed count")
+        # The README must quote the MEDIAN, not the maximum. An earlier draft
+        # quoted a single near-best seed; this pins the honest statistic.
+        c.check(
+            f"median\n{r['median']:.1f}%" in c.text
+            or f"median**\n{r['median']:.1f}%" in c.text
+            or f"{r['median']:.1f}% lower RMSE" in c.text,
+            f"README must quote the MEDIAN RMSE improvement ({r['median']:.1f}%)",
+        )
+
     # -------------------------------------------------- kalman memory sweep
     if "kalman_memory_sweep" in summary:
         ks = summary["kalman_memory_sweep"]["rows"]

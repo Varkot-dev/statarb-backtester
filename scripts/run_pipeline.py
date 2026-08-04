@@ -374,6 +374,20 @@ def main() -> int:
     if result.returncode != 0:
         raise RuntimeError(f"kalman sweep failed:\n{result.stderr}")
     kalman_sweep = pd.read_csv(kalman_csv)
+
+    # Kalman tracking error vs rolling OLS, as a DISTRIBUTION across seeds.
+    # A single-seed figure for a quantity this variable is a cherry-pick.
+    rmse_csv = REPORTS_DIR / "kalman_rmse.csv"
+    result = subprocess.run(
+        [str(ENGINE_BINARY), "kalman-rmse", "--out", str(rmse_csv), "--quiet"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"kalman rmse failed:\n{result.stderr}")
+    kalman_rmse = {
+        r["statistic"]: r["rmse_improvement_pct"]
+        for _, r in pd.read_csv(rmse_csv).iterrows()
+    }
     report.plot_leakage_calibration(
         calibration, REPORTS_DIR / "leakage_calibration.png"
     )
@@ -443,6 +457,7 @@ def main() -> int:
             "without_interest": no_interest_metrics,
         },
         "sweep_csv": str(sweep_csv.relative_to(REPO_ROOT)),
+        "kalman_rmse": kalman_rmse,
         "kalman_memory_sweep": {
             "csv": str(kalman_csv.relative_to(REPO_ROOT)),
             "rows": kalman_sweep.to_dict(orient="records"),

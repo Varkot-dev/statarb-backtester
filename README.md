@@ -200,6 +200,19 @@ cutoff discards a 61st observation entirely while weighting the 60th fully,
 whereas exponential decay degrades gracefully. The pathology is real for both,
 and worse for the estimator with the discontinuity.
 
+The filter is also better at the job it is normally sold for. Against a hedge
+ratio drifting from 1.0 to 1.6, it tracks the truth with a **median
+48.5% lower RMSE** than a 60-bar rolling regression — but across
+30 seeds the spread runs from 6.8% to 64.9%
+(p25 36.3%, p75 56.5%). It is reported as a distribution
+because an earlier draft quoted a single seed at 62%, which sits near the top of
+that range rather than at its centre — a cherry-pick, even if an unintentional
+one.
+
+```bash
+statarb kalman-rmse --out reports/kalman_rmse.csv
+```
+
 > **A correction worth recording.** The first version of this sweep traded the
 > filter's *standardised innovation* and reported a dramatic collapse
 > (−1.73 to −3.15). That was measuring the wrong thing. The one-step innovation
