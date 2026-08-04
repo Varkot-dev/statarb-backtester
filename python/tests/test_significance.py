@@ -222,6 +222,62 @@ def test_bootstrap_handles_a_short_series():
     assert len(stationary_bootstrap_sharpe(np.array([]), 252.0, 0.04)) == 0
 
 
+def test_sharpe_se_has_correct_nominal_coverage():
+    """**The test that was missing.** A confidence interval must cover.
+
+    The previous test asserted only that the SE shrinks with sample size — a
+    property that holds for any multiple of the correct value, and which passed
+    while the SE was understated by sqrt(252). A nominal 95% interval achieved
+    measured coverage of 0.095.
+
+    Coverage is the property that actually matters, so coverage is what is
+    asserted. This is the same unit-mixing error CREDITS.md criticises another
+    project for; catching it there and shipping it here is why the check is now
+    on the outcome rather than on the formula.
+    """
+    bars_per_year, n_bars = 252.0, 2515
+    for true_annual_sharpe in (0.0, 0.65):
+        per_bar_mean = true_annual_sharpe / np.sqrt(bars_per_year) * 0.01
+        covered = 0
+        n_experiments = 400
+        for seed in range(n_experiments):
+            returns = np.random.default_rng(seed).normal(per_bar_mean, 0.01, n_bars)
+            navs = 100_000.0 * np.cumprod(np.concatenate([[1.0], 1.0 + returns]))
+            result = assess(
+                _trades([1.0, 2.0]), navs, risk_free_annual=0.0, n_bootstrap=2
+            )
+            if abs(result.sharpe - true_annual_sharpe) <= 1.96 * result.sharpe_se:
+                covered += 1
+        coverage = covered / n_experiments
+        assert 0.90 <= coverage <= 0.99, (
+            f"nominal 95% interval achieved {coverage:.3f} coverage at "
+            f"true Sharpe {true_annual_sharpe}; check for a units mismatch "
+            f"between the annualized Sharpe and the per-bar sample size"
+        )
+
+
+def test_sharpe_se_and_bootstrap_ci_are_the_same_order_of_magnitude():
+    """Two uncertainty measures on one series must not disagree wildly.
+
+    They will not agree exactly — the bootstrap accounts for serial dependence
+    the IID formula ignores, so it is legitimately wider. But a factor of 25
+    between them, which is what the units bug produced, means one of them is
+    simply wrong. This is the cheap cross-check that would have caught it from
+    the shipped output alone.
+    """
+    rng = np.random.default_rng(11)
+    returns = rng.normal(0.0004, 0.004, 2515)
+    navs = 100_000.0 * np.cumprod(np.concatenate([[1.0], 1.0 + returns]))
+    result = assess(_trades(list(rng.normal(200, 800, 50))), navs, n_bootstrap=400)
+
+    bootstrap_half_width = (result.sharpe_ci_high - result.sharpe_ci_low) / 2.0
+    ratio = bootstrap_half_width / result.sharpe_se
+    assert 0.3 < ratio < 4.0, (
+        f"bootstrap half-width {bootstrap_half_width:.4f} and Lo SE "
+        f"{result.sharpe_se:.4f} differ by {ratio:.1f}x; one of them is wrong"
+    )
+
+
 def test_sharpe_standard_error_grows_as_the_sample_shrinks():
     """Lo (2002): SE ~ sqrt((1 + SR^2/2)/n), so it must fall with n."""
     rng = np.random.default_rng(29)

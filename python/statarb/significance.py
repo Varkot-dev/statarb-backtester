@@ -299,11 +299,29 @@ def assess(
         rf_bar = (1.0 + risk_free_annual) ** (1.0 / bars_per_year) - 1.0
         excess = returns - rf_bar
         sd = excess.std(ddof=1)
-        sharpe = (
-            0.0 if sd < 1e-12 else float(excess.mean() / sd * np.sqrt(bars_per_year))
-        )
+        sharpe_per_bar = 0.0 if sd < 1e-12 else float(excess.mean() / sd)
+        sharpe = sharpe_per_bar * float(np.sqrt(bars_per_year))
         # Lo (2002), IID case.
-        sharpe_se = float(np.sqrt((1.0 + 0.5 * sharpe**2) / len(returns)))
+        #
+        # UNIT DISCIPLINE. This line was wrong for a while, in the same way and
+        # by the same factor that CREDITS.md criticises another project for:
+        # `sharpe` above is ANNUALIZED, but Lo's SE = sqrt((1 + SR^2/2)/T) is
+        # unit-consistent only when SR and T share a time base. Computing it
+        # from the annualized Sharpe against a bar count understated the
+        # standard error by sqrt(252) ~ 16x, and a nominal 95% interval
+        # achieved measured coverage of 0.095.
+        #
+        # The tell was visible in the shipped output the whole time: this SE
+        # said 0.0225 while the bootstrap CI half-width on the same series said
+        # 0.5725 — two uncertainty measures in one dataclass disagreeing 25x.
+        #
+        # So: compute in per-bar units, annualize once, at the end. The
+        # intermediate is named `_per_bar` so a future edit cannot re-introduce
+        # the ambiguity by reading a bare `sharpe` and assuming a time base.
+        sharpe_se_per_bar = float(
+            np.sqrt((1.0 + 0.5 * sharpe_per_bar**2) / len(returns))
+        )
+        sharpe_se = sharpe_se_per_bar * float(np.sqrt(bars_per_year))
 
         boot = stationary_bootstrap_sharpe(
             returns,
