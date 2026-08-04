@@ -151,7 +151,15 @@ def main() -> int:
             "README claims MA/V is the only cointegrated real pair",
         )
     else:
-        print("note: real data unavailable in this run; skipping those checks")
+        # Not a failure: CI runs offline by design, so the real-data claims
+        # cannot be re-derived there. Reporting the count that WAS checked
+        # keeps the gap visible instead of letting a smaller number look like
+        # a full pass.
+        print(
+            "note: real data unavailable in this run — the real-data, "
+            "variance-ratio, and stability claims were NOT verified. "
+            "Run `make backtest` with network access to check all of them."
+        )
 
     # ------------------------------------------------------- variance ratio
     if real.get("available"):
@@ -296,7 +304,11 @@ def main() -> int:
             )
 
     # ------------------------------------------------------------------ report
-    print(f"{c.passed} README claims verified against reports/summary.json")
+    scope = "all" if real.get("available") else "offline-only"
+    print(
+        f"{c.passed} README claims verified against reports/summary.json "
+        f"({scope})"
+    )
     if c.failures:
         print(f"\n{len(c.failures)} MISMATCH(ES):", file=sys.stderr)
         for failure in c.failures:

@@ -136,8 +136,13 @@ jobs:
       # reports/summary.json and asserts the string appears in the README.
       # Runs with --skip-real-data output, so only the offline claims are
       # checked here; the real-data assertions are skipped automatically.
+      # The README claims every number in it is generated, not hand-typed.
+      # This is what makes that enforceable rather than aspirational: it
+      # reformats each value from reports/summary.json and asserts the string
+      # appears in the README, and it checks the DIRECTION of each finding so a
+      # sign flip fails the build instead of silently contradicting the prose.
       - name: Verify the README matches the generated artifacts
-        run: python scripts/verify_readme.py
+        run: make verify
 
       - name: Upload the generated reports
         uses: actions/upload-artifact@v4

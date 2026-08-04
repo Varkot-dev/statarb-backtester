@@ -12,7 +12,7 @@ PYTEST := $(PYTHON) -m pytest
 DUNE := eval $$(opam env) && dune
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-ocaml test-python backtest verify report clean deps fmt check all
+.PHONY: help build test test-ocaml test-python backtest backtest-offline verify report clean deps fmt check all ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -43,6 +43,11 @@ verify: ## Check that every number in the README matches the generated artifacts
 	$(PYTHON) scripts/verify_readme.py
 
 all: test backtest verify ## Test, backtest, and verify the README
+
+ci: ## What CI runs: build, both suites, offline pipeline, claim verification
+	$(MAKE) test
+	$(PYTHON) scripts/run_pipeline.py --skip-real-data
+	$(PYTHON) scripts/verify_readme.py
 
 check: test ## Alias for `test`, for CI readability
 
