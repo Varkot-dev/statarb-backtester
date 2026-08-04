@@ -16,5 +16,6 @@ let () =
       ("execution", Test_execution.tests);
       ("csv_io", Test_csv_io.tests);
       ("lookahead", Test_lookahead.tests);
+      ("leakage", Test_leakage.tests);
       ("properties", Test_properties.tests);
     ]

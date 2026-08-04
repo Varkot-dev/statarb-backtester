@@ -20,6 +20,18 @@ let usage =
 USAGE
   statarb backtest --prices <in.csv> --out-dir <dir> [options]
   statarb sweep    --prices <in.csv> --out <sweep.csv> [options]
+  statarb calibrate --prices <in.csv> --out <calibration.csv> [options]
+
+CALIBRATE
+  Measures how much a KNOWN dose of lookahead bias would change the reported
+  result, producing a dose-response curve. Two leak types are dosed:
+
+    timing shift    the signal at bar t is the one belonging to bar t+k.
+                    Caused by an off-by-one in a resample or join.
+    outcome filter  a fraction of trades that will lose are skipped.
+                    Caused by shift(-1) on a feature, or same-bar execution.
+
+  Dose zero reproduces the honest engine exactly. See lib/leakage.ml.
 
 REQUIRED
   --prices PATH        input CSV: date,price_a,price_b (chronological)
@@ -244,6 +256,61 @@ let sweep_grid =
         entries)
     windows
 
+(** Emit the leakage dose-response curves.
+
+    Both leak types are written to one file with a [leak_type] column, so the
+    two curves can be compared directly — which is the point, since they move
+    in opposite directions. *)
+let cmd_calibrate (o : opts) =
+  let prices = require "--prices" o.prices in
+  let out = require "--out" o.out in
+  let cfg = config_of_opts o in
+  match Csv_io.read_prices prices with
+  | Error e -> die (Printf.sprintf "reading %s: %s" prices (Types.string_of_error e))
+  | Ok series -> (
+      match
+        ( Leakage.sweep cfg series ~max_peek:10,
+          Leakage.sweep_outcome_filter cfg series ~steps:10 ~seed:42 )
+      with
+      | Error e, _ | _, Error e -> die ("calibration failed: " ^ Types.string_of_error e)
+      | Ok shift_curve, Ok filter_curve ->
+          let header =
+            "leak_type,dose,sharpe_ratio,annualized_return,max_drawdown,n_trades,win_rate,final_nav"
+          in
+          let row leak dose (c : Leakage.calibration) =
+            Printf.sprintf "%s,%.4f,%.6f,%.6f,%.6f,%d,%.6f,%.2f" leak dose
+              c.sharpe c.annualized_return c.max_drawdown c.n_trades c.win_rate
+              c.final_nav
+          in
+          let rows =
+            List.map
+              (fun (c : Leakage.calibration) ->
+                row "timing_shift" (float_of_int c.peek_bars) c)
+              shift_curve
+            @ List.map (fun (f, c) -> row "outcome_filter" f c) filter_curve
+          in
+          (match Csv_io.write_lines out (header :: rows) with
+          | Error e -> die ("writing calibration: " ^ Types.string_of_error e)
+          | Ok () -> ());
+          if not o.quiet then begin
+            Printf.printf "\n=== Leakage calibration ===\n\n";
+            Printf.printf "  Timing shift (signal describes bar t+k):\n";
+            List.iter
+              (fun (c : Leakage.calibration) ->
+                Printf.printf "    k=%-2d  Sharpe %+.4f  trades %3d  win %.3f\n"
+                  c.peek_bars c.sharpe c.n_trades c.win_rate)
+              shift_curve;
+            Printf.printf "\n  Outcome filter (fraction of losers skipped):\n";
+            List.iter
+              (fun (f, (c : Leakage.calibration)) ->
+                Printf.printf
+                  "    %3.0f%%  Sharpe %+.4f  trades %3d  win %.3f\n"
+                  (f *. 100.) c.sharpe c.n_trades c.win_rate)
+              filter_curve;
+            Printf.printf "\n"
+          end;
+          Printf.printf "wrote %s (%d rows)\n" out (List.length rows))
+
 let cmd_sweep (o : opts) =
   let prices = require "--prices" o.prices in
   let out = require "--out" o.out in
@@ -296,6 +363,7 @@ let () =
     match argv.(1) with
     | "backtest" -> cmd_backtest (parse_args argv 2)
     | "sweep" -> cmd_sweep (parse_args argv 2)
+    | "calibrate" -> cmd_calibrate (parse_args argv 2)
     | "-h" | "--help" -> print_string usage
     | other ->
         prerr_endline ("error: unknown subcommand: " ^ other);
