@@ -37,6 +37,7 @@ from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
 from statarb.significance import assess  # noqa: E402
 from statarb.variance_ratio import variance_ratio_test  # noqa: E402
+from statarb.stability import analyse_stability  # noqa: E402
 from statarb.diagnostics import (  # noqa: E402
     MIN_WINDOW_HALF_LIFE_RATIO,
     deflated_sharpe_threshold,
@@ -251,6 +252,18 @@ def process_real_data() -> dict:
             vr_rows = [
                 v.to_dict() for v in variance_ratio_test(_la - _beta * _lb)
             ]
+            # Stability. A 756-bar window rather than the 252 default: the
+            # repo's own window/half-life law applies to this test too, and at
+            # 252 bars a pair with a 30-bar half-life rejects in only ~11% of
+            # windows even when perfectly stable, which hides real breaks.
+            _pa = frame["price_a"].copy()
+            _pb = frame["price_b"].copy()
+            _idx = pd.to_datetime(frame["date"])
+            _pa.index = _idx
+            _pb.index = _idx
+            stability = analyse_stability(
+                _pa, _pb, name_a=ticker_a, name_b=ticker_b, window=756, step=21
+            ).to_dict()
             charts = {
                 "equity": str(
                     report.plot_equity_curve(
@@ -280,6 +293,7 @@ def process_real_data() -> dict:
                     "metrics": metrics,
                     "significance": significance,
                     "variance_ratio": vr_rows,
+                    "stability": stability,
                     "charts": charts,
                 }
             )

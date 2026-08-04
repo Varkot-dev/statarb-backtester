@@ -113,6 +113,63 @@ Two implementation notes that matter:
   five pairs. Only MA/V is unambiguous.
 
 
+### MA/V: the anomaly, diagnosed
+
+One result in the table above does not fit. **MA/V is the only pair that passes
+cointegration** (EG *p* = 0.0008, Johansen 24.77) and the only one the variance
+ratio calls mean-reverting — and it still **lost $4,498**.
+
+The README used to note this and move on: *"a pair cointegrated over 2015–2024
+may have broken in 2020."* That is now measured rather than speculated.
+
+[Rolling cointegration](python/statarb/stability.py) over 3-year windows dates
+the break to within a month:
+
+| window ending | EG *p* | hedge ratio β |
+| --- | ---: | ---: |
+| 2021-05-05 | 0.0026 | 1.25 |
+| 2021-06-04 | 0.0082 | 1.25 |
+| **2021-07-06** | **0.1695** | 1.24 |
+| 2021-08-04 | 0.3010 | 1.22 |
+| 2021-09-02 | 0.4705 | 1.20 |
+
+Across all five pairs:
+
+| Pair | cointegrated, 1st half | 2nd half | β drift | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| KO/PEP | 0% | 2% | 0.83 → 0.93 | stable |
+| XOM/CVX | 24% | 19% | 0.17 → 1.39 | stable |
+| HD/LOW | 0% | 10% | 1.29 → 0.70 | **broken** |
+| MA/V | 74% | 38% | 1.21 → 1.11 | **broken** |
+| GS/MS | 0% | 0% | 0.64 → 0.96 | stable |
+
+**So the full-sample test was right and useless simultaneously.** The
+relationship was real for the first half of the sample and then stopped being
+the same relationship — which is exactly the thing a full-sample statistic
+cannot express, and exactly why the pair lost money being traded on it.
+
+### Two methodological notes that matter more than the result
+
+**The obvious CUSUM specification is invalid here.** Running CUSUM on recursive
+residuals from the log-level cointegrating regression — the natural choice, and
+the one that matches the rest of the pair analysis — produces a **95–100%
+false-positive rate on synthetic pairs with no break at all.** The reason is
+specific to this application: CUSUM's null requires independent recursive
+residuals, but the residual of a cointegrating regression *is the spread*, which
+is a persistent AR(1) by construction (measured lag-1 autocorrelation 0.95). The
+test's assumption is violated by the very property that makes the pair
+tradeable. The error-correction form restores size to a measured **6.7%**
+against a nominal 5%.
+
+**The version with better numbers was rejected.** A CUSUM-of-squares variant
+showed power 0.93 — against a 33% false-positive rate. A detector that fires on
+a third of stable pairs would "find" breaks everywhere and every one would be
+noise. The shipped test has correct size and *low* power (it misses the MA/V
+break entirely; the rolling test found that), and that blind spot is pinned in a
+test so it cannot be quietly optimised away. Low power means the test misses
+things, which is recoverable. Bad size means it invents them, which is not.
+
+
 ---
 
 ## Why it underperforms: the estimator, not the edge

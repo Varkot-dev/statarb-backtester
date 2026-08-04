@@ -178,6 +178,30 @@ def main() -> int:
                 "README claims XOM/CVX is not distinguishable from a random walk",
             )
 
+    # ------------------------------------------------------------- stability
+    if real.get("available"):
+        for r in real["results"]:
+            st = r.get("stability")
+            if not st:
+                continue
+            c.contains(
+                f"| {st['first_half_fraction'] * 100:.0f}% | "
+                f"{st['second_half_fraction'] * 100:.0f}% |",
+                f"stability halves for {r['pair']}",
+            )
+        # The headline stability claim: MA/V is the pair that broke.
+        ma_v = next((r for r in real["results"] if r["pair"] == "MA/V"), None)
+        if ma_v and ma_v.get("stability"):
+            st = ma_v["stability"]
+            c.check(
+                not st["is_stable"],
+                "README claims MA/V shows a structural break",
+            )
+            c.check(
+                st["second_half_fraction"] < st["first_half_fraction"],
+                "README claims MA/V cointegration deteriorates over the sample",
+            )
+
     # ---------------------------------------------------------- diagnostics
     if "diagnostics" in summary:
         d = summary["diagnostics"]
