@@ -524,12 +524,14 @@ def main() -> int:
     )
     cascade_stages.append(
         (
-            "Deflated Sharpe",
-            f"best expected from luck alone, N = {int(deflated['n_trials'])} trials\n"
-            f"deflated statistic {deflated['deflated_sharpe_statistic']:+.3f} "
-            f"(p = {deflated['p_value']:.2f})",
+            "Deflated Sharpe: the bar to clear",
+            f"best Sharpe expected from luck alone at N = "
+            f"{int(deflated['n_trials'])} trials\n"
+            f"the row above scores {deflated['observed_sharpe']:+.3f} and does "
+            f"not clear it",
             float(deflated["expected_max_under_null"]),
-            "killed",
+            # Not a measurement: a level the row above failed to exceed.
+            "threshold",
         )
     )
 

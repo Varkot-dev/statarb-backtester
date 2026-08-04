@@ -597,6 +597,7 @@ def plot_honesty_cascade(
     values = [stage[2] for stage in stages]
     span = max(abs(min(values)), abs(max(values)), 0.1)
 
+
     for y, stage in zip(y_positions, stages):
         label, detail, value, verdict = stage[:4]
         # An optional 5th element is the standard error of the value. Where a
@@ -609,24 +610,50 @@ def plot_honesty_cascade(
                 elinewidth=1.4, capsize=4, capthick=1.4, zorder=6,
             )
         killed = verdict != "alpha"
-        # Hatching, not hue, is what survives a greyscale print.
-        ax.barh(
-            y,
-            value,
-            height=0.46,
-            color=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
-            alpha=0.30 if killed else 0.85,
-            hatch="///" if killed else None,
-            edgecolor=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
-            linewidth=1.1,
-            zorder=3,
-        )
+        # A "threshold" row is not a measured Sharpe — it is the bar the row
+        # above had to clear and did not. Drawing it as a filled bar identical
+        # to the three measurements made the single most important row of the
+        # figure read as a fourth result, which inverts its meaning. It is now
+        # a vertical gate with a hollow marker: visibly a level, not an outcome.
+        if verdict == "threshold":
+            ax.plot(
+                [value, value], [y - 0.30, y + 0.30],
+                color=COLOR_DRAWDOWN, linewidth=2.6, zorder=4,
+                solid_capstyle="butt",
+            )
+            ax.plot(
+                [value], [y], marker="o", markersize=9, markerfacecolor="white",
+                markeredgecolor=COLOR_DRAWDOWN, markeredgewidth=2.2, zorder=5,
+            )
+            ax.annotate(
+                "", xy=(value, y), xytext=(0, y),
+                arrowprops={
+                    "arrowstyle": "-", "color": COLOR_DRAWDOWN,
+                    "linewidth": 1.0, "linestyle": (0, (2, 3)), "alpha": 0.55,
+                },
+                zorder=2,
+            )
+        else:
+            # Hatching, not hue, is what survives a greyscale print.
+            ax.barh(
+                y,
+                value,
+                height=0.46,
+                color=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
+                alpha=0.30 if killed else 0.85,
+                hatch="///" if killed else None,
+                edgecolor=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
+                linewidth=1.1,
+                zorder=3,
+            )
         # The value sits on the far side of the bar tip, so it never collides
         # with the bar however long the bar is.
         ax.annotate(
             f"{value:+.3f}",
-            xy=(value, y),
-            xytext=(6 if value >= 0 else -6, 0),
+            xy=(value + (std_err or 0.0), y),
+            # Lift the label clear of the error bar when there is one; a value
+            # sitting on top of its own interval is unreadable.
+            xytext=(6 if value >= 0 else -6, 9 if std_err else 0),
             textcoords="offset points",
             va="center",
             ha="left" if value >= 0 else "right",
@@ -649,7 +676,9 @@ def plot_honesty_cascade(
         )
         ax.annotate(
             detail,
-            xy=(0, y - 0.20),
+            # A row with an error bar needs its detail text pushed further down,
+            # or the interval's left cap runs through it.
+            xy=(0, y - (0.30 if std_err else 0.20)),
             xytext=(-14, 0),
             textcoords="offset points",
             va="center",
@@ -682,10 +711,14 @@ def plot_honesty_cascade(
         # the caller's stage list) if it exists, otherwise to the last row. It
         # sits in the gap *below* the row rather than on top of the bar, so it
         # covers neither the hatching nor the value label.
-        note_y = (y_positions[2] if n > 2 else y_positions[-1]) - 0.52
+        # Placed against the threshold row itself rather than in the gap below
+        # it. The gap is where the connecting arrow runs, and a box sitting in
+        # it broke the chain the figure is built to show. Anchoring the note to
+        # the row it explains is also simply more legible.
+        note_y = y_positions[2] if n > 2 else y_positions[-1]
         ax.annotate(
             deflated_note,
-            xy=(span * 0.02, note_y),
+            xy=(span * 0.02, note_y - 0.30),
             fontsize=8.6,
             color=COLOR_DRAWDOWN,
             va="center",
@@ -703,10 +736,19 @@ def plot_honesty_cascade(
     ax.axvline(0.0, color=COLOR_NEUTRAL, linewidth=1.0, zorder=1)
     ax.set_yticks([])
     ax.set_ylim(-0.75, n - 0.25)
-    # Only as much negative room as the data actually needs. A symmetric range
-    # would spend half the canvas on an empty region and shrink every bar.
-    left = min(min(values), 0.0)
-    ax.set_xlim(left - span * 0.08 if left < 0 else -span * 0.03, span * 1.30)
+    # Only as much negative room as the data actually needs — but the ERROR
+    # BARS decide that, not the point estimates. The walk-forward interval
+    # reaches below zero, and an axis clipped at 0.0 would hide the single fact
+    # that row exists to convey: that the interval crosses zero.
+    lower_bounds = [
+        stage[2] - stage[4]
+        for stage in stages
+        if len(stage) > 4 and stage[4] is not None and np.isfinite(stage[4])
+    ]
+    left = min([min(values)] + lower_bounds + [0.0])
+    ax.set_xlim(left - span * 0.10 if left < 0 else -span * 0.03, span * 1.30)
+    # A zero line, so "crosses zero" is legible rather than inferred.
+    ax.axvline(0.0, color=COLOR_NEUTRAL, linewidth=1.0, zorder=1)
     ax.set_xlabel("Sharpe ratio")
     ax.spines["left"].set_visible(False)
     _style_axes(ax)
@@ -822,11 +864,14 @@ def plot_memory_law(
     # The two curves converge at the right-hand end and the region between them
     # is narrow throughout, so the Kalman label is parked in the genuinely empty
     # lower-middle of the plot and tied to its curve with a leader line.
-    k_first = kalman.iloc[0]
+    # Anchored to a mid-curve point on the clear right-hand side. Anchoring to
+    # the first point put the leader line straight through the shaded danger
+    # band, which is the one region of the plot that has to stay readable.
+    k_mid = kalman.iloc[len(kalman) // 2]
     ax.annotate(
         "Kalman filter\nexponential decay, no window",
-        xy=(float(k_first["memory_ratio"]), float(k_first["sharpe_ratio"])),
-        xytext=(0.30, 0.20),
+        xy=(float(k_mid["memory_ratio"]), float(k_mid["sharpe_ratio"])),
+        xytext=(0.46, 0.16),
         textcoords="axes fraction",
         ha="left",
         va="center",
@@ -847,9 +892,12 @@ def plot_memory_law(
         kalman["sharpe_ratio"].max()
     )
     ax.annotate(
-        f"rolling OLS falls {r_hi:+.2f} → {r_lo:+.2f}\n"
-        f"Kalman falls {k_hi:+.2f} → {k_lo:+.2f}\n"
-        "the discontinuity costs the difference",
+        # Stated in the reading direction, matching the subtitle. Describing a
+        # fall while the eye travels rightward past rising curves made the two
+        # annotations contradict each other.
+        f"across the sweep: rolling OLS {r_lo:+.2f} → {r_hi:+.2f}\n"
+        f"Kalman {k_lo:+.2f} → {k_hi:+.2f}\n"
+        "the hard cutoff costs the gap at the left",
         xy=(0.985, 0.06),
         xycoords="axes fraction",
         ha="right",
@@ -877,8 +925,8 @@ def plot_memory_law(
     )
     ax.set_xlim(0, x_max * 1.06)
     ax.annotate(
-        "both degrade as memory approaches the half-life — the windowless "
-        "filter does not escape it",
+        "reading rightward, memory grows and both estimators recover — the "
+        "windowless filter is subject to the same law",
         xy=(0.0, 1.015),
         xycoords="axes fraction",
         ha="left",
