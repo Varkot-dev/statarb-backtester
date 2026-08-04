@@ -153,6 +153,40 @@ def main() -> int:
     else:
         print("note: real data unavailable in this run; skipping those checks")
 
+    # ---------------------------------------------------------- diagnostics
+    if "diagnostics" in summary:
+        d = summary["diagnostics"]
+        for r in d["half_life_sensitivity"]:
+            c.contains(
+                f"| {int(r['half_life'])} | {r['sharpe']:+.3f} |",
+                f"half-life sensitivity row hl={r['half_life']}",
+            )
+        for r in d["window_ratio_sensitivity"]:
+            c.contains(
+                f"| {r['zscore_window']} | {r['window_ratio']:.1f} | {r['sharpe']:+.3f} |",
+                f"window-ratio row w={r['zscore_window']}",
+            )
+        ds = d["deflated_sharpe"]
+        c.contains(f"{ds['observed_sharpe']:+.3f}", "deflated: observed Sharpe")
+        c.contains(
+            f"{ds['expected_max_under_null']:+.3f}", "deflated: luck threshold"
+        )
+        c.contains(
+            f"{ds['deflated_sharpe_statistic']:+.3f}".replace("-", "−"),
+            "deflated: statistic",
+        )
+        c.check(
+            not ds["survives"],
+            "README claims the searched result does NOT survive deflation",
+        )
+        wf = d["walk_forward"]
+        if wf:
+            import statistics
+            mean_oos = statistics.fmean(r["oos_sharpe"] for r in wf)
+            c.contains(
+                f"{mean_oos:+.3f}".replace("-", "−"), "walk-forward mean OOS Sharpe"
+            )
+
     # ------------------------------------------------------ leakage calibration
     if "leakage_calibration" in summary:
         rows = summary["leakage_calibration"]["rows"]

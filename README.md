@@ -25,6 +25,13 @@ exit at |z| ≤ 0.5, stop at |z| ≥ 3.5, 3bp cost per leg per side, 4% risk-fre
 | **Independent random walks** *(negative control)* | +0.26 | [−0.24, +0.76] | −5.56% | 53 | +0.86 | **0.393** | **Not significant** ✓ |
 | Real market data, 5 pairs (2015–2024) | −0.26…+0.29 | all bracket 0 | ≤6.05% | 46–62 | −1.09…+0.65 | 0.28–0.92 | **0 of 5 significant** |
 
+> **The real-data result has a diagnosed cause, not a shrug.** The default
+> 60-bar window was shorter than the half-life of every pair tested. Fixing that
+> flips all five Sharpes positive — and the [Deflated Sharpe
+> correction](#and-this-is-where-it-would-be-easy-to-lie) shows the fix is
+> indistinguishable from luck once the specification search is accounted for.
+> See [Why it underperforms](#why-it-underperforms-the-estimator-not-the-edge).
+
 **Reading this table.** The only dataset with a statistically significant edge is
 the one built to *have* an edge. The negative control — where no exploitable
 relationship exists — is correctly identified as no-edge. Real markets show
@@ -43,6 +50,115 @@ than with total return.
 **The primary dataset's total return is +64.6%, but only +13.6% of that is
 trading.** The other +51.0% is interest on idle cash — the strategy holds a
 position only 24% of bars. Every result below decomposes the two.
+
+---
+
+## Why it underperforms: the estimator, not the edge
+
+A backtest reporting a weak result usually stops there. "The strategy didn't
+work" is a non-explanation — it doesn't distinguish a broken engine from a
+mis-specified strategy from a genuinely absent edge. Those are three different
+conclusions.
+
+Here is the diagnosis, run on synthetic data where the ground truth is known.
+
+### It is not the engine, and not the sizing
+
+| Test | Result | Rules out |
+| --- | --- | --- |
+| Leverage sweep (0.25× → 1.0×) | Sharpe **flat**: +0.7395 → +0.7475 | Undersizing. Sharpe is scale-invariant; leverage cannot manufacture it. |
+| Fast-reverting data (half-life 5) | Sharpe **+1.41**, +$145k trading PnL | An engine bug. It captures edge when edge exists. |
+| Cost drag | 12% of gross PnL | Costs eating the edge. |
+
+### It is the window-to-half-life ratio
+
+At **constant** signal-to-noise, varying only the half-life (window fixed at 60):
+
+| half-life | Sharpe | win rate | trades |
+| ---: | ---: | ---: | ---: |
+| 5 | +1.406 | 84.5% | 58 |
+| 10 | +0.689 | 63.5% | 52 |
+| 15 | +0.082 | 60.4% | 48 |
+| 20 | -0.020 | 61.5% | 52 |
+| 30 | -0.228 | 59.2% | 49 |
+
+Trade *count* barely moves; the win *rate* collapses. **Not fewer opportunities
+— worse ones.**
+
+Now hold the data completely fixed and change only the window:
+
+| window | window ÷ half-life | Sharpe | win rate | trading PnL |
+| ---: | ---: | ---: | ---: | ---: |
+| 40 | 2.0 | +0.002 | 48.5% | $-544 |
+| 60 | 3.0 | -0.020 | 61.5% | $-270 |
+| 90 | 4.5 | +0.380 | 70.3% | $+10,954 |
+| 120 | 6.0 | +0.578 | 75.8% | $+18,741 |
+| 180 | 9.0 | +0.549 | 83.3% | $+14,881 |
+| 250 | 12.5 | +1.035 | 90.9% | $+26,770 |
+
+Same prices, same strategy, same costs. **A ratio below ~5 destroys the signal.**
+
+![Window ratio finding](reports/window_ratio_finding.png)
+
+**The mechanism.** The z-score standardises the spread against a trailing
+window. When that window is only a small multiple of the half-life, it is
+dominated by the very deviation being measured: the spread sits elevated for
+roughly a half-life, dragging the rolling mean up with it, so the z-score reads
+"normal" exactly when the spread is most extreme. The estimator defeats itself.
+The contamination is O(φ^w) for an AR(1) with φ = 2^(−1/h), and only becomes
+negligible once w ≫ h.
+
+Confirmed as the driver rather than a confound: holding the *ratio* fixed at 6
+while varying the half-life collapses the Sharpe spread from **1.634 to 0.335**.
+
+### Every real pair was mis-specified
+
+| Pair | half-life | window ÷ half-life | verdict |
+| --- | ---: | ---: | --- |
+| MA/V | 30 | 2.02 | too short |
+| KO/PEP | 70 | 0.86 | far too short |
+| HD/LOW | 109 | 0.55 | far too short |
+| GS/MS | 156 | 0.39 | far too short |
+| XOM/CVX | 395 | 0.15 | far too short |
+
+The default 60-bar window was shorter than the half-life of every real pair.
+
+### And this is where it would be easy to lie
+
+Re-running the real pairs with a correctly-sized window flips **every** Sharpe
+positive, two with p < 0.05. It would be very easy to report that as a discovery.
+
+It is not one:
+
+- **HD/LOW's p = 0.046 rests on three trades.** Three observations cannot
+  establish anything.
+- **XOM/CVX needs a 1,975-bar window** (5 × 395) but the sample is 2,515. I
+  capped it at 500 — a ratio of 1.27, still below threshold — and would have
+  been reporting a result computed under conditions the method itself says are
+  insufficient.
+- **Choosing a window per pair is a specification search.** The
+  [Deflated Sharpe Ratio](python/statarb/diagnostics.py) (Bailey & López de
+  Prado, 2014) gives the best Sharpe expected from *N* trials under the null:
+
+| | value |
+| --- | ---: |
+| Best observed after the search | **+0.654** |
+| Expected best from pure luck, N = 30 | **+0.656** |
+| Deflated statistic | **−0.007** (p = 0.50) |
+
+Numerically indistinguishable from a coin flip.
+
+**The honest test** is walk-forward: estimate the half-life on the first 60% of
+the sample, derive the window from it, evaluate on data that played no part in
+the choice. Mean out-of-sample Sharpe: **+0.154**.
+
+Note that 3 of 5 pairs are *dropped* by this test — their half-lives demand
+windows longer than the out-of-sample segment supports. That refusal is itself
+the finding: most real large-cap pairs revert too slowly to be traded on daily
+bars with any window a decade of data can support.
+
+**So: the methodological finding is real and reproducible. The alpha is not.**
+That distinction is the point of the whole project.
 
 ---
 
@@ -520,7 +636,7 @@ constraints, or taxes.
 
 ```bash
 make deps      # opam install dune alcotest qcheck; pip install -r requirements.txt
-make test      # 148 OCaml + 87 Python = 235 tests
+make test      # 148 OCaml + 102 Python = 250 tests
 make backtest  # regenerates every figure in this README from fixed seeds
 ```
 
@@ -561,7 +677,7 @@ Two honest qualifications, neither of which is a claim made on the resume:
 
 ## Testing
 
-**235 tests.** `make test`
+**250 tests.** `make test`
 
 ### OCaml — 148 tests ([`engine/test/`](engine/test/))
 
@@ -578,7 +694,7 @@ Two honest qualifications, neither of which is a claim made on the resume:
 | **`leakage`** | **10** | **Dose-zero anchors to production; each leak type moves the measured direction** |
 | `properties` | 20 | QCheck invariants (see below) |
 
-### Python — 87 tests ([`python/tests/`](python/tests/))
+### Python — 102 tests ([`python/tests/`](python/tests/))
 
 Synthetic ground truth, cointegration detection, CSV validation, chart
 generation, significance, and **cross-language integration** — which is what
@@ -646,6 +762,7 @@ python/statarb/
   synth.py                  Seeded generators with known ground truth
   cointegration.py          Engle-Granger, Johansen, half-life, screening
   significance.py           t-tests, Lo (2002) SE, stationary bootstrap
+  diagnostics.py          ← WHY it underperforms: window/half-life, deflated Sharpe
   datasets.py               The reproducible dataset corpus
   fetch.py                  yfinance, degrading gracefully offline
   io.py                     CSV interchange, validated

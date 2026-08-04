@@ -555,3 +555,105 @@ def plot_leakage_calibration(calibration: pd.DataFrame, out_path: str | Path) ->
     fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
+
+def plot_window_ratio_finding(
+    half_life_rows: pd.DataFrame,
+    ratio_rows: pd.DataFrame,
+    out_path: str | Path,
+    min_ratio: float = 5.0,
+) -> Path:
+    """Plot the window-to-half-life finding: the mechanism behind weak results.
+
+    Two panels, because the finding needs both halves to be convincing:
+
+    - **Left**: at *constant* signal-to-noise, Sharpe collapses as the half-life
+      rises while the trade count barely moves. That rules out "fewer
+      opportunities" and points at "worse ones".
+    - **Right**: holding the data fixed and varying only the window recovers the
+      performance. Same prices, same strategy, same costs — the estimator was
+      the problem.
+
+    The shaded band marks where ``window / half_life`` is below the usable
+    threshold, which is where every real-world pair in this project landed under
+    the default configuration.
+    """
+    out_path = Path(out_path)
+
+    fig, (ax_hl, ax_ratio) = plt.subplots(
+        1, 2, figsize=(11.5, 4.6), layout="constrained"
+    )
+
+    # --- Left: Sharpe and win rate collapse with half-life ---
+    ax_hl.plot(
+        half_life_rows["half_life"], half_life_rows["sharpe"],
+        color=COLOR_DRAWDOWN, linewidth=1.8, marker="o", markersize=5,
+        label="Sharpe",
+    )
+    ax_hl.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.9)
+    ax_hl.set_xlabel("spread half-life (bars)")
+    ax_hl.set_ylabel("Sharpe ratio", color=COLOR_DRAWDOWN)
+    ax_hl.tick_params(axis="y", labelcolor=COLOR_DRAWDOWN)
+    ax_hl.set_title(
+        "Slower reversion kills it — at constant signal-to-noise",
+        loc="left", fontsize=11, fontweight="600",
+    )
+    _style_axes(ax_hl)
+
+    ax_trades = ax_hl.twinx()
+    ax_trades.plot(
+        half_life_rows["half_life"], half_life_rows["win_rate"] * 100.0,
+        color=COLOR_SPREAD, linewidth=1.3, linestyle="--", marker="s",
+        markersize=4, label="win rate",
+    )
+    ax_trades.set_ylabel("win rate (%)", color=COLOR_SPREAD)
+    ax_trades.tick_params(axis="y", labelcolor=COLOR_SPREAD)
+    ax_trades.spines["top"].set_visible(False)
+
+    n_min = int(half_life_rows["n_trades"].min())
+    n_max = int(half_life_rows["n_trades"].max())
+    ax_hl.annotate(
+        f"trade count barely moves ({n_min}–{n_max})\nso it is not fewer chances — it is worse ones",
+        xy=(0.97, 0.90), xycoords="axes fraction", ha="right", va="top",
+        fontsize=8, color=COLOR_NEUTRAL,
+    )
+
+    # --- Right: the same data, fixed — only the window changes ---
+    ax_ratio.axvspan(
+        0, min_ratio, color=COLOR_DRAWDOWN, alpha=0.07, zorder=0,
+    )
+    ax_ratio.plot(
+        ratio_rows["window_ratio"], ratio_rows["sharpe"],
+        color=COLOR_ENTRY, linewidth=1.8, marker="o", markersize=5,
+    )
+    ax_ratio.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.9)
+    ax_ratio.axvline(
+        min_ratio, color=COLOR_DRAWDOWN, linewidth=1.0, linestyle=":",
+    )
+    ax_ratio.set_xlabel("z-score window ÷ half-life")
+    ax_ratio.set_ylabel("Sharpe ratio")
+    ax_ratio.set_title(
+        "Identical data — only the window changed",
+        loc="left", fontsize=11, fontweight="600", color=COLOR_ENTRY,
+    )
+    ax_ratio.annotate(
+        "trailing mean contaminated\nby the deviation being measured",
+        xy=(0.30, 0.30), xycoords="axes fraction", ha="center", va="center",
+        fontsize=8, color=COLOR_DRAWDOWN,
+    )
+    ax_ratio.annotate(
+        f"every real pair in this project\nlanded in here under the default window",
+        xy=(0.97, 0.12), xycoords="axes fraction", ha="right", va="bottom",
+        fontsize=8, color=COLOR_NEUTRAL,
+    )
+    _style_axes(ax_ratio)
+
+    fig.suptitle(
+        "Why the strategy underperforms: the estimator, not the edge",
+        fontsize=12.5, fontweight="600", x=0.01, ha="left",
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path

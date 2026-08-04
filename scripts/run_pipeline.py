@@ -36,6 +36,13 @@ from statarb.cointegration import analyse_pair  # noqa: E402
 from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
 from statarb.significance import assess  # noqa: E402
+from statarb.diagnostics import (  # noqa: E402
+    MIN_WINDOW_HALF_LIFE_RATIO,
+    deflated_sharpe_threshold,
+    half_life_sensitivity,
+    walk_forward,
+    window_ratio_sensitivity,
+)
 
 DATA_DIR = REPO_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
@@ -331,14 +338,61 @@ def main() -> int:
     sweep_csv = REPORTS_DIR / "sweep.csv"
     run_sweep(RAW_DIR / f"{primary.key}.csv", sweep_csv, primary.key)
 
+    # ------------------------------------------------------------------
+    # Diagnostics: WHY the strategy performs as it does. A weak result with no
+    # mechanism is a non-explanation; these experiments isolate the cause on
+    # data whose ground truth is known.
+    # ------------------------------------------------------------------
+    log("diagnostics: half-life and window-ratio sensitivity")
+    diag_dir = REPORTS_DIR / "diagnostics"
+    diag_dir.mkdir(parents=True, exist_ok=True)
+    hl_rows = [r.to_dict() for r in half_life_sensitivity(ENGINE_BINARY, diag_dir)]
+    ratio_rows = [
+        r.to_dict() for r in window_ratio_sensitivity(ENGINE_BINARY, diag_dir)
+    ]
+    pd.DataFrame(hl_rows).to_csv(diag_dir / "half_life_sensitivity.csv", index=False)
+    pd.DataFrame(ratio_rows).to_csv(diag_dir / "window_ratio_sensitivity.csv", index=False)
+    report.plot_window_ratio_finding(
+        pd.DataFrame(hl_rows), pd.DataFrame(ratio_rows),
+        REPORTS_DIR / "window_ratio_finding.png",
+    )
+
     real = (
         {"available": False, "attempts": [], "results": [], "skipped": True}
         if args.skip_real_data
         else process_real_data()
     )
 
+    # Walk-forward on the real pairs: the only non-circular test of the window
+    # rule, since the window is chosen from data the evaluation never sees.
+    walk_forward_rows: list[dict] = []
+    if real.get("available"):
+        log("diagnostics: walk-forward out-of-sample test")
+        for r in real["results"]:
+            row = walk_forward(
+                ENGINE_BINARY, diag_dir,
+                sio.read_prices(RAW_DIR / f"{r['key']}.csv"), r["pair"],
+            )
+            if row is not None:
+                walk_forward_rows.append(row.to_dict())
+        if walk_forward_rows:
+            pd.DataFrame(walk_forward_rows).to_csv(
+                diag_dir / "walk_forward.csv", index=False
+            )
+
     summary = {
         "synthetic": [asdict(o) for o in outcomes],
+        "diagnostics": {
+            "half_life_sensitivity": hl_rows,
+            "window_ratio_sensitivity": ratio_rows,
+            "walk_forward": walk_forward_rows,
+            "min_window_half_life_ratio": MIN_WINDOW_HALF_LIFE_RATIO,
+            # Honest accounting of the specification search performed while
+            # investigating the window rule on real data.
+            "deflated_sharpe": deflated_sharpe_threshold(
+                observed_sharpe=0.654, n_trials=30, n_observations=2515
+            ),
+        },
         "cash_interest_comparison": {
             "dataset": primary.key,
             "with_interest": outcomes[0].metrics,
