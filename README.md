@@ -171,34 +171,46 @@ That distinction is the point of the whole project.
 
 ### 1. The window-to-half-life law is about memory
 
-The obvious objection is that this is an artifact of rolling windows — that a
-windowless estimator would sidestep it. A Kalman filter is the natural test: it
-weights the past by an exponential decay set by the process-noise ratio Q/R
-rather than by a cutoff.
+The obvious objection to the finding above is that it is an artifact of using a
+rolling window at all — that a windowless estimator would sidestep it. A Kalman
+filter is the natural test: it has no window, weighting the past by an
+exponential decay set by the process-noise ratio Q/R, with an effective memory
+of 1/√(Q/R) bars.
 
-[It does not escape.](engine/lib/kalman.ml) Sweeping the filter's **effective
-memory** (1/√(Q/R)) over the same ratios reproduces the same collapse:
+```bash
+statarb kalman-sweep --prices data/raw/coint_medium.csv --half-life 14.9 --out reports/kalman_memory_sweep.csv
+```
 
-| half-life | mem/hl = 2 | mem/hl = 5 | mem/hl = 12 |
+| memory ÷ half-life | effective memory (bars) | Sharpe | trades |
 | ---: | ---: | ---: | ---: |
-| 10 | −1.73 | −0.36 | **+0.61** |
-| 20 | −2.65 | −0.70 | −0.33 |
-| 30 | −3.15 | −1.25 | −0.99 |
+| 2 | 30 | +0.468 | 59 |
+| 3 | 45 | +0.559 | 59 |
+| 5 | 74 | +0.664 | 51 |
+| 8 | 119 | +0.881 | 53 |
+| 12 | 178 | +0.947 | 54 |
 
-So the constraint is not about windows — it is about **memory**. Any trailing
-estimator whose memory is comparable to the half-life of the process it measures
-has its location estimate contaminated by the very deviation it is trying to
-detect; a hard window and an exponential decay are two ways of spending the same
-budget. That turns a tuning tip into a property of the estimation problem, and
-it is why the Kalman filter is here as a *test of the finding* rather than an
-upgrade.
+**The direction survives: longer memory is monotonically better**, +0.468 to
++0.947 across the range, on identical data with an identical signal definition
+and identical costs. So the constraint is not about windows as such — a
+smoothly-decaying memory is subject to it too.
 
-(The filter is also better at what it is normally sold for: against a hedge
-ratio drifting from 1.0 to 1.6, it tracks the truth with **62% lower RMSE** than
-a 60-bar rolling regression, which at one point estimated β = 2.50 against a
-true 1.48 — a pure window artifact.)
+**But the effect is much milder than the windowed case**, where the same ratio
+sweep runs from ≈0.00 to +1.04. That difference is itself informative: a hard
+cutoff discards a 61st observation entirely while weighting the 60th fully,
+whereas exponential decay degrades gracefully. The pathology is real for both,
+and worse for the estimator with the discontinuity.
 
----
+> **A correction worth recording.** The first version of this sweep traded the
+> filter's *standardised innovation* and reported a dramatic collapse
+> (−1.73 to −3.15). That was measuring the wrong thing. The one-step innovation
+> answers *"how surprised was the model today?"*; the z-score answers *"how far
+> from equilibrium is the spread sitting?"* Mean reversion trades the second,
+> and a filter that tracks well has *small* innovations exactly when the spread
+> is most extreme. The signal exceeded |2| on **0 of 2,420 bars**, so the
+> strategy never traded and the "collapse" was an empty trade list. The table
+> above trades the residual from the filtered hedge ratio — a level — which is
+> the like-for-like comparison. The published claim was too strong; this is the
+> measured one.
 
 ## 2. Leakage calibration: what does cheating buy you?
 
@@ -720,7 +732,7 @@ constraints, or taxes.
 
 ```bash
 make deps      # opam install dune alcotest qcheck; pip install -r requirements.txt
-make test      # 148 OCaml + 102 Python = 250 tests
+make test      # 157 OCaml + 160 Python = 317 tests
 make backtest  # regenerates every figure in this README from fixed seeds
 ```
 
@@ -755,9 +767,9 @@ significant. The resume claims a backtester was built, not that it found alpha.
 
 ## Testing
 
-**250 tests.** `make test`
+**317 tests** plus four compile-fail attacks on the abstraction boundary. `make test`
 
-### OCaml — 148 tests ([`engine/test/`](engine/test/))
+### OCaml — 157 tests ([`engine/test/`](engine/test/))
 
 | Suite | Tests | Covers |
 | --- | ---: | --- |
@@ -772,7 +784,7 @@ significant. The resume claims a backtester was built, not that it found alpha.
 | **`leakage`** | **10** | **Dose-zero anchors to production; each leak type moves the measured direction** |
 | `properties` | 20 | QCheck invariants (see below) |
 
-### Python — 102 tests ([`python/tests/`](python/tests/))
+### Python — 160 tests ([`python/tests/`](python/tests/))
 
 Synthetic ground truth, cointegration detection, CSV validation, chart
 generation, significance, and **cross-language integration** — which is what
@@ -820,6 +832,8 @@ engine/                     OCaml backtest engine
     causal.ml               ← The no-lookahead enforcement mechanism
     leakage.ml              ← Controlled leak injection; the calibration curves
     kalman.ml               ← Time-varying hedge ratio; tests the memory law
+    causal.mli              ← The abstraction boundary; without it the
+                              guarantee is a convention, not a type
     rolling.ml              Trailing-window statistics (views only)
     ols.ml                  Rolling hedge-ratio regression
     signal.ml               Spread, z-score, entry/exit decisions

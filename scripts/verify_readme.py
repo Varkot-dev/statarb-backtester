@@ -244,6 +244,30 @@ def main() -> int:
                 f"{mean_oos:+.3f}".replace("-", "−"), "walk-forward mean OOS Sharpe"
             )
 
+    # -------------------------------------------------- kalman memory sweep
+    if "kalman_memory_sweep" in summary:
+        ks = summary["kalman_memory_sweep"]["rows"]
+        for r in ks:
+            c.contains(
+                f"| {r['memory_ratio']:.0f} | {r['effective_memory_bars']:.0f} | "
+                f"{r['sharpe_ratio']:+.3f} |",
+                f"kalman sweep row ratio={r['memory_ratio']}",
+            )
+        # The claim is monotone improvement with memory, not a specific level.
+        c.check(
+            all(a["sharpe_ratio"] <= b["sharpe_ratio"] + 1e-9
+                for a, b in zip(ks, ks[1:])),
+            "README claims Sharpe rises monotonically with Kalman memory",
+        )
+        # And every row must represent a real backtest, not an empty trade list.
+        # The first version of this table reported 0-10 trades; the numbers were
+        # artifacts. This pins that it cannot recur.
+        c.check(
+            all(r["n_trades"] >= 20 for r in ks),
+            "kalman sweep rows must have enough trades to be meaningful "
+            f"(min {min(r['n_trades'] for r in ks)})",
+        )
+
     # ------------------------------------------------------ leakage calibration
     if "leakage_calibration" in summary:
         rows = summary["leakage_calibration"]["rows"]

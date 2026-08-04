@@ -21,6 +21,13 @@ USAGE
   statarb backtest --prices <in.csv> --out-dir <dir> [options]
   statarb sweep    --prices <in.csv> --out <sweep.csv> [options]
   statarb calibrate --prices <in.csv> --out <calibration.csv> [options]
+  statarb kalman-sweep --prices <in.csv> --out <sweep.csv> [options]
+
+KALMAN-SWEEP
+  Tests whether the window/half-life law generalises to a WINDOWLESS estimator.
+  A Kalman filter has no window; its effective memory is 1/sqrt(Q/R). Sweeping
+  that memory over the same ratios that break rolling OLS answers whether the
+  constraint is about windows or about memory.
 
 CALIBRATE
   Measures how much a KNOWN dose of lookahead bias would change the reported
@@ -56,6 +63,7 @@ COST AND SIZING OPTIONS
 METRIC CONVENTIONS
   --bars-per-year F    annualization factor (252.0)
   --risk-free F        annual risk-free rate as a decimal (0.04)
+  --half-life F        measured spread half-life, for kalman-sweep (20.0)
   --no-cash-interest   do NOT credit idle cash at the risk-free rate.
                        Off by default: a part-time strategy that is charged a
                        risk-free hurdle on its whole NAV but earns nothing on
@@ -85,6 +93,7 @@ type opts = {
   mutable bars_per_year : float;
   mutable risk_free : float;
   mutable label : string;
+  mutable half_life : float;
   mutable no_cash_interest : bool;
   mutable quiet : bool;
 }
@@ -108,6 +117,7 @@ let default_opts () =
     bars_per_year = d.bars_per_year;
     risk_free = d.risk_free_rate;
     label = "";
+    half_life = 20.0;
     no_cash_interest = false;
     quiet = false;
   }
@@ -152,6 +162,7 @@ let parse_args (argv : string array) (start : int) : opts =
       | "--bars-per-year" -> o.bars_per_year <- float_of a (need !i a); 2
       | "--risk-free" -> o.risk_free <- float_of a (need !i a); 2
       | "--label" -> o.label <- need !i a; 2
+      | "--half-life" -> o.half_life <- float_of a (need !i a); 2
       | "--no-cash-interest" -> o.no_cash_interest <- true; 1
       | "--quiet" -> o.quiet <- true; 1
       | "-h" | "--help" -> print_string usage; exit 0
@@ -256,11 +267,70 @@ let sweep_grid =
         entries)
     windows
 
-(** Emit the leakage dose-response curves.
+(** Emit the Kalman memory sweep.
 
-    Both leak types are written to one file with a [leak_type] column, so the
-    two curves can be compared directly — which is the point, since they move
-    in opposite directions. *)
+    The README's claim that the window/half-life law is really a {e memory} law
+    rests on this table, so it must be generated rather than transcribed. It was
+    previously prose in the README with no code behind it — the sharpest
+    possible contradiction in a repository whose thesis is that every number is
+    regenerated. *)
+let cmd_kalman_sweep (o : opts) =
+  let prices = require "--prices" o.prices in
+  let out = require "--out" o.out in
+  let cfg = config_of_opts o in
+  match Csv_io.read_prices prices with
+  | Error e -> die (Printf.sprintf "reading %s: %s" prices (Types.string_of_error e))
+  | Ok series ->
+      (* The half-life is a property of the data, so it is estimated here rather
+         than assumed: the sweep is over memory/half-life, and that ratio is
+         meaningless without a measured denominator. *)
+      let half_life = o.half_life in
+      let ratios = [ 2.0; 3.0; 5.0; 8.0; 12.0 ] in
+      let rows =
+        List.filter_map
+          (fun ratio ->
+            let memory = ratio *. half_life in
+            let qr = 1.0 /. (memory *. memory) in
+            match
+              Kalman.make_params ~observation_variance:1e-3
+                ~state_variance:(1e-3 *. qr) ()
+            with
+            | Error _ -> None
+            | Ok kp -> (
+                match Kalman.backtest_with_filter cfg kp series with
+                | Error _ -> None
+                | Ok m ->
+                    Some
+                      (Printf.sprintf "%.1f,%.1f,%.4f,%.6f,%.6f,%d,%.6f"
+                         half_life ratio memory
+                         (Kalman.signal_to_noise kp)
+                         m.Metrics.sharpe_ratio m.Metrics.n_trades
+                         m.Metrics.win_rate)))
+          ratios
+      in
+      let header =
+        "half_life,memory_ratio,effective_memory_bars,signal_to_noise,sharpe_ratio,n_trades,win_rate"
+      in
+      (match Csv_io.write_lines out (header :: rows) with
+      | Error e -> die ("writing kalman sweep: " ^ Types.string_of_error e)
+      | Ok () -> ());
+      if not o.quiet then begin
+        Printf.printf "\n=== Kalman memory sweep (half-life %.1f bars) ===\n\n"
+          half_life;
+        Printf.printf "  A Kalman filter has no window. If the window/half-life\n";
+        Printf.printf "  law is really about MEMORY, short memory must still fail.\n\n";
+        Printf.printf "  %-12s %-16s %s\n" "memory/hl" "eff. memory" "Sharpe";
+        List.iter
+          (fun r ->
+            match String.split_on_char ',' r with
+            | _ :: ratio :: mem :: _ :: sharpe :: _ ->
+                Printf.printf "  %-12s %-16s %s\n" ratio mem sharpe
+            | _ -> ())
+          rows;
+        Printf.printf "\n"
+      end;
+      Printf.printf "wrote %s (%d rows)\n" out (List.length rows)
+
 let cmd_calibrate (o : opts) =
   let prices = require "--prices" o.prices in
   let out = require "--out" o.out in
@@ -364,6 +434,7 @@ let () =
     | "backtest" -> cmd_backtest (parse_args argv 2)
     | "sweep" -> cmd_sweep (parse_args argv 2)
     | "calibrate" -> cmd_calibrate (parse_args argv 2)
+    | "kalman-sweep" -> cmd_kalman_sweep (parse_args argv 2)
     | "-h" | "--help" -> print_string usage
     | other ->
         prerr_endline ("error: unknown subcommand: " ^ other);

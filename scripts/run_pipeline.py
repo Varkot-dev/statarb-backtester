@@ -358,6 +358,22 @@ def main() -> int:
     if result.returncode != 0:
         raise RuntimeError(f"calibration failed:\n{result.stderr}")
     calibration = pd.read_csv(calibration_csv)
+
+    # Kalman memory sweep. The README claims the window/half-life law is really
+    # a MEMORY law that a windowless estimator does not escape; that table must
+    # be generated rather than transcribed.
+    log(f"'{primary.key}': Kalman memory sweep")
+    kalman_csv = REPORTS_DIR / "kalman_memory_sweep.csv"
+    primary_hl = outcomes[0].cointegration["half_life"]
+    result = subprocess.run(
+        [str(ENGINE_BINARY), "kalman-sweep", "--prices",
+         str(RAW_DIR / f"{primary.key}.csv"), "--out", str(kalman_csv),
+         "--half-life", f"{primary_hl:.4f}", "--quiet"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"kalman sweep failed:\n{result.stderr}")
+    kalman_sweep = pd.read_csv(kalman_csv)
     report.plot_leakage_calibration(
         calibration, REPORTS_DIR / "leakage_calibration.png"
     )
@@ -427,6 +443,10 @@ def main() -> int:
             "without_interest": no_interest_metrics,
         },
         "sweep_csv": str(sweep_csv.relative_to(REPO_ROOT)),
+        "kalman_memory_sweep": {
+            "csv": str(kalman_csv.relative_to(REPO_ROOT)),
+            "rows": kalman_sweep.to_dict(orient="records"),
+        },
         "leakage_calibration": {
             "csv": str(calibration_csv.relative_to(REPO_ROOT)),
             "chart": "reports/leakage_calibration.png",

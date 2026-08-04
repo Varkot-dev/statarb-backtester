@@ -1,0 +1,6 @@
+(executable
+ (name main)
+ (modules main fx)
+ (libraries statarb)
+ (flags
+  (:standard -w +a-4-9-26-27-32-33-35-39-40-41-42-44-45-70 -warn-error -a)))

@@ -275,3 +275,157 @@ let effective_memory_bars (p : params) : float =
     so early estimates are dominated by the initial guess. Ten bars is ample for
     a two-parameter state; the engine ignores signals before this point. *)
 let warmup_bars (_p : params) : int = 10
+
+(** [backtest_with_filter cfg params series] runs the full engine driven by the
+    filter's standardised innovation instead of a rolling z-score.
+
+    This exists so the README's memory-law table is {e generated} rather than
+    transcribed. That table carries the claim that the window/half-life finding
+    generalises beyond windowed estimators, which is the most load-bearing claim
+    in the repository; having it live only as prose was the sharpest possible
+    contradiction of the project's own thesis that every number is regenerated.
+
+    {2 What signal this trades, and a correction}
+
+    The obvious choice is the filter's {e standardised innovation}, and the
+    first version of this function used it. That was wrong, in a way worth
+    recording because it is a real conceptual trap.
+
+    The one-step innovation answers {b "how surprised was the model today?"} The
+    rolling z-score answers {b "how far from equilibrium is the spread sitting
+    right now?"} Mean reversion trades the second. A filter that tracks well has
+    {e small} innovations precisely when the spread is most extreme, because it
+    has already absorbed the level into its state. Measured on the primary
+    dataset, the standardised innovation exceeded |2| on 0 of 2,420 bars at a
+    memory ratio of 2 (max |z| = 1.87), so the strategy simply never traded and
+    the reported Sharpe was an artifact of an empty trade list.
+
+    What this function trades instead is the {b residual from the filtered
+    hedge ratio} — [log P_A - alpha_t - beta_t * log P_B] — standardised over a
+    trailing window exactly as {!Backtest.run} standardises the OLS residual.
+    That is a level, which is what the strategy needs. The Kalman filter's
+    contribution is a better, smoothly-varying beta; it does not replace the
+    z-score.
+
+    So the comparison is honest: identical signal definition, identical
+    thresholds, identical execution and costs. The only difference from the
+    production path is how beta is estimated.
+
+    Causality is inherited rather than re-argued: the filter recursion at bar
+    [t] is a function of bars [0..t] by construction, and the intent computed at
+    [t] is filled at [t+1] exactly as in {!Backtest.run}. *)
+let backtest_with_filter (cfg : Config.t) (params : params) (series : series) :
+    (Metrics.t, error) result =
+  let open R in
+  let n = Array.length series in
+  let warm = warmup_bars params in
+  if n < warm + 2 then Error (Insufficient_data { needed = warm + 2; got = n })
+  else begin
+    let filtered = run params series in
+    let portfolio = ref (Portfolio.initial cfg) in
+    let entry_dates : (int, string) Hashtbl.t = Hashtbl.create 64 in
+    let pending = ref Signal.Hold in
+    let pending_z = ref 0. in
+    let navs = ref [] in
+    let total_interest = ref 0. in
+    let spread_history = Array.make n 0. in
+    let spread_count = ref 0 in
+    let abort = ref None in
+
+    let i = ref 0 in
+    while !i < n && !abort = None do
+      let t = !i in
+      let bar = series.(t) in
+      let pa = Price.to_float bar.price_a in
+      let pb = Price.to_float bar.price_b in
+
+      if t > 0 then begin
+        let updated, interest = Portfolio.accrue_interest !portfolio cfg in
+        portfolio := updated;
+        total_interest := !total_interest +. interest
+      end;
+
+      (match !pending with
+      | Signal.Hold -> ()
+      | intent -> (
+          match
+            Execution.apply cfg ~intent ~position:!portfolio.position
+              ~fill_price_a:pa ~fill_price_b:pb ~fill_index:t
+              ~fill_date:bar.date ~beta:filtered.(t).new_state.beta
+              ~z:!pending_z ~entry_dates
+          with
+          | Ok fill -> portfolio := Portfolio.apply_fill !portfolio fill
+          | Error e -> abort := Some e));
+
+      if !abort = None then begin
+        (* The spread implied by the filtered beta, standardised over a
+           trailing window. Grown incrementally, so bar t's spread is computed
+           with bar t's beta — the same causal discipline as Backtest.run. *)
+        (if t >= warm then begin
+           let st = filtered.(t).new_state in
+           let spread =
+             log (Price.to_float bar.price_a)
+             -. st.alpha
+             -. (st.beta *. log (Price.to_float bar.price_b))
+           in
+           spread_history.(!spread_count) <- spread;
+           incr spread_count
+         end);
+        (if t >= warm && !spread_count > cfg.zscore_window then
+           let sv = Causal.create spread_history (!spread_count - 1) in
+           let z =
+             match Rolling.zscore sv cfg.zscore_window with
+             | Ok (Some z) -> z
+             | _ -> Float.nan
+           in
+           if Float.is_finite z then begin
+             let snapshot =
+               {
+                 Signal.fit =
+                   { Ols.alpha = 0.; beta = filtered.(t).new_state.beta;
+                     r_squared = 0. };
+                 spread = filtered.(t).innovation;
+                 z = Some z;
+               }
+             in
+             pending :=
+               Signal.decide ~snapshot ~position:!portfolio.position
+                 ~bar_index:t cfg;
+             pending_z := z
+           end
+           else pending := Signal.Hold);
+        navs := Portfolio.nav !portfolio ~price_a:pa ~price_b:pb :: !navs
+      end;
+      incr i
+    done;
+
+    match !abort with
+    | Some e -> Error e
+    | None ->
+        let final = series.(n - 1) in
+        let fpa = Price.to_float final.price_a in
+        let fpb = Price.to_float final.price_b in
+        let* final_portfolio =
+          match !portfolio.position with
+          | Flat -> Ok !portfolio
+          | Open _ ->
+              let* fill =
+                Execution.apply cfg ~intent:(Signal.Exit End_of_data)
+                  ~position:!portfolio.position ~fill_price_a:fpa
+                  ~fill_price_b:fpb ~fill_index:(n - 1) ~fill_date:final.date
+                  ~beta:1. ~z:!pending_z ~entry_dates
+              in
+              Ok (Portfolio.apply_fill !portfolio fill)
+        in
+        let final_nav = Portfolio.nav final_portfolio ~price_a:fpa ~price_b:fpb in
+        let navs_arr =
+          let a = Array.of_list (List.rev !navs) in
+          if Array.length a > 0 then a.(Array.length a - 1) <- final_nav;
+          a
+        in
+        Metrics.compute ~navs:navs_arr
+          ~trades:(List.rev final_portfolio.trades)
+          ~total_costs:final_portfolio.total_costs ~turnover_notional:0.
+          ~total_interest:!total_interest ~n_trading_bars:(n - warm)
+          ~bars_with_position:0 cfg
+  end
