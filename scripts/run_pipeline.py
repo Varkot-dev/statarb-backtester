@@ -37,7 +37,7 @@ from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
 from statarb.significance import assess  # noqa: E402
 from statarb.variance_ratio import variance_ratio_test  # noqa: E402
-from statarb.stability import analyse_stability  # noqa: E402
+from statarb.stability import analyse_stability, break_robustness  # noqa: E402
 from statarb.diagnostics import (  # noqa: E402
     MIN_WINDOW_HALF_LIFE_RATIO,
     deflated_sharpe_threshold,
@@ -264,6 +264,18 @@ def process_real_data() -> dict:
             stability = analyse_stability(
                 _pa, _pb, name_a=ticker_a, name_b=ticker_b, window=756, step=21
             ).to_dict()
+            # Sweep the window. Reporting a break at ONE window is a
+            # specification search of size one, which is the exact pattern
+            # deflated_sharpe_threshold exists to catch — and it was never
+            # pointed at this parameter.
+            _rob = break_robustness(_pa, _pb)
+            stability["robustness"] = {
+                "rows": _rob.to_dict(orient="records"),
+                "fraction_of_windows_firing": _rob.attrs.get(
+                    "fraction_of_windows_firing", float("nan")
+                ),
+                "sign_changes": _rob.attrs.get("sign_changes", 0),
+            }
             charts = {
                 "equity": str(
                     report.plot_equity_curve(

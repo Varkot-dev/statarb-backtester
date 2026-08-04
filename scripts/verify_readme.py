@@ -197,6 +197,32 @@ def main() -> int:
                 f"{st['second_half_fraction'] * 100:.0f}% |",
                 f"stability halves for {r['pair']}",
             )
+        # The break-robustness sweep. Its whole point is that the verdict is
+        # NOT robust, so the verifier pins the honest reading rather than the
+        # flattering one.
+        ma_v_rob = next(
+            (r["stability"].get("robustness")
+             for r in real["results"] if r["pair"] == "MA/V"),
+            None,
+        )
+        if ma_v_rob:
+            for row in ma_v_rob["rows"]:
+                c.contains(
+                    f"| {int(row['window'])} | "
+                    f"{row['first_half_fraction'] * 100:.0f}% | "
+                    f"{row['second_half_fraction'] * 100:.0f}% | "
+                    f"{row['deterioration']:+.3f} |",
+                    f"robustness row window={int(row['window'])}",
+                )
+            c.contains(
+                f"{ma_v_rob['fraction_of_windows_firing'] * 100:.0f}% of windows fire",
+                "robustness firing fraction",
+            )
+            c.check(
+                ma_v_rob["fraction_of_windows_firing"] < 0.5,
+                "README states the break verdict is NOT robust across windows",
+            )
+
         # The headline stability claim: MA/V is the pair that broke.
         ma_v = next((r for r in real["results"] if r["pair"] == "MA/V"), None)
         if ma_v and ma_v.get("stability"):

@@ -784,6 +784,67 @@ def _half_sample_hedge_ratios(
     return out[0], out[1]
 
 
+#: Windows swept when reporting whether a break verdict is robust.
+#:
+#: A single window is a specification search of size one. This repository built
+#: `deflated_sharpe_threshold` precisely to catch results that hold at one
+#: parameter value, and then reported a break at one window without pointing
+#: that machinery at the window itself. The sweep below is the correction.
+ROBUSTNESS_WINDOWS: tuple[int, ...] = (252, 378, 504, 630, 756, 882, 1008)
+
+
+def break_robustness(
+    prices_a: pd.Series,
+    prices_b: pd.Series,
+    windows: tuple[int, ...] = ROBUSTNESS_WINDOWS,
+    step: int = 21,
+) -> pd.DataFrame:
+    """Sweep the rolling window and report the deterioration statistic at each.
+
+    **Why this exists.** The MA/V break was originally reported at a single
+    window (756 bars), chosen with a documented rationale — the repo's own
+    window/half-life law implies a short window has no power. The rationale is
+    sound. But choosing one value of a free parameter and reporting the result
+    that follows is a specification search, and this repository built
+    :func:`statarb.diagnostics.deflated_sharpe_threshold` specifically to catch
+    that pattern. It was never pointed at the stability window.
+
+    Sweeping it shows the verdict is **not robust**: the deterioration statistic
+    is non-monotone and changes sign across the range, and only two of seven
+    windows exceed the firing threshold. Reporting the sweep alongside the
+    verdict is the honest form. It does not mean the break is not real — the
+    hedge-ratio drift and the sharp p-value transition are independent evidence
+    — but it does mean the deterioration statistic alone cannot carry the claim.
+
+    Returns a frame with one row per window: the window, its ratio to a
+    reference half-life if supplied, the two half-sample fractions, the
+    deterioration, and whether it fires.
+    """
+    rows: list[dict] = []
+    for window in windows:
+        try:
+            report = analyse_stability(
+                prices_a, prices_b, window=window, step=step
+            )
+        except (ValueError, IndexError):
+            continue
+        rows.append(
+            {
+                "window": window,
+                "first_half_fraction": report.first_half_fraction,
+                "second_half_fraction": report.second_half_fraction,
+                "deterioration": report.rolling_deterioration(),
+                "fires": not report.is_stable(),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    if len(frame) > 0:
+        frame.attrs["fraction_of_windows_firing"] = float(frame["fires"].mean())
+        signs = frame["deterioration"].map(lambda v: 1 if v > 0 else -1)
+        frame.attrs["sign_changes"] = int((signs.diff().fillna(0) != 0).sum())
+    return frame
+
+
 def analyse_stability(
     prices_a: pd.Series,
     prices_b: pd.Series,

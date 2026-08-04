@@ -314,6 +314,36 @@ relationship was real for the first half of the sample and then stopped being
 the same relationship — which is exactly the thing a full-sample statistic
 cannot express, and exactly why the pair lost money being traded on it.
 
+#### But the deterioration statistic alone does not carry the claim
+
+The 74% → 38% figure above uses a 756-bar window, chosen because this repo's own
+window/half-life law says a shorter one has no power. The rationale is sound.
+Choosing one value of a free parameter and reporting what follows is still a
+specification search — the exact pattern
+[the deflated Sharpe machinery](#and-this-is-where-it-would-be-easy-to-lie)
+exists to catch, and it was never pointed at this parameter.
+
+Sweeping it:
+
+| window | 1st half | 2nd half | deterioration | |
+| ---: | ---: | ---: | ---: | :--- |
+| 252 | 7% | 2% | +0.056 | no |
+| 378 | 18% | 10% | +0.078 | no |
+| 504 | 27% | 38% | -0.104 | no |
+| 630 | 47% | 38% | +0.089 | no |
+| 756 | 74% | 38% | +0.357 | **fires** |
+| 882 | 82% | 62% | +0.205 | no |
+| 1008 | 75% | 94% | -0.194 | no |
+
+**14% of windows fire, and the statistic changes sign 3 times.**
+So the deterioration statistic is not robust and cannot carry the claim on its own.
+
+What does survive the sweep is the *other* evidence, which does not depend on
+the threshold: the Engle-Granger p-value transitions sharply (0.0082 → 0.1695
+between two adjacent windows), and the hedge ratio drifts 1.21 → 1.11 across the
+sample. The break is most likely real; the headline number overstated how
+cleanly it can be detected.
+
 ### Two methodological notes that matter more than the result
 
 **The obvious CUSUM specification is invalid here.** Running CUSUM on recursive
