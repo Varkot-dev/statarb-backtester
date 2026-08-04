@@ -12,6 +12,7 @@
   csv_io
   config
   backtest
-  leakage)
+  leakage
+  kalman)
  (flags
   (:standard -w +a-4-9-40-41-42-44-45-70 -warn-error -a)))

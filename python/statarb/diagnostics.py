@@ -80,6 +80,36 @@ gives a mean out-of-sample Sharpe of **-0.029**.
 So: the methodological finding is real and reproducible. The alpha is not.
 That distinction is the entire point.
 
+The law is about memory, not windows
+-------------------------------------
+
+The obvious objection to the finding above is that it is an artifact of using a
+*rolling window* at all — that a smarter estimator without a hard cutoff would
+not suffer from it. A Kalman filter is the natural candidate: it has no window,
+weighting past observations by an exponential decay set by the process-noise
+ratio :math:`Q/R` rather than by a cutoff.
+
+It does not escape. Sweeping the Kalman filter's **effective memory**
+(:math:`1/\sqrt{Q/R}`, see :func:`statarb`'s OCaml ``Kalman.effective_memory_bars``)
+over the same ratios reproduces the same collapse:
+
+.. code-block:: text
+
+    half-life   mem/hl=2   mem/hl=5   mem/hl=12
+        10        -1.73      -0.36       +0.61
+        20        -2.65      -0.70       -0.33
+        30        -3.15      -1.25       -0.99
+
+So the constraint is not about windows. It is about **memory**: any trailing
+estimator whose memory is comparable to the half-life of the process it is
+measuring will have its location estimate contaminated by the very deviation it
+is trying to detect. A hard window and an exponential decay are two ways of
+spending the same budget.
+
+That generalises the result from a tuning tip into a property of the estimation
+problem, and it is why the Kalman filter is in this repository as a *test of the
+finding* rather than as an upgrade.
+
 See :func:`half_life_sensitivity`, :func:`window_ratio_sensitivity`,
 :func:`deflated_sharpe_threshold`, and :func:`walk_forward` — each returns the
 data behind one of the tables above.

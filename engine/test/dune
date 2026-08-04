@@ -12,7 +12,8 @@
   test_properties
   test_csv_io
   test_signal
-  test_leakage)
+  test_leakage
+  test_kalman)
  (libraries statarb alcotest qcheck-core qcheck-core.runner)
  (flags
   (:standard -w +a-4-9-40-41-42-44-45-70 -warn-error -a)))
