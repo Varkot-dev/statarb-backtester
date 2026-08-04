@@ -73,6 +73,45 @@ than with total return.
 trading.** The other +51.0% is interest on idle cash — the strategy holds a
 position only 24% of bars. Every result below decomposes the two.
 
+### A finite half-life is not evidence of mean reversion
+
+The half-life estimator in this repo carries a documented warning: the OU
+regression is **biased downward on near-unit-root series**, so a genuine random
+walk returns a large-but-finite half-life rather than infinity. That is the same
+bias that forces the Dickey-Fuller test to use non-standard critical values.
+
+Prose is a weak way to make that point, so it is now measured. The
+[variance ratio test](python/statarb/variance_ratio.py) (Lo & MacKinlay, 1988) is
+the complement the half-life estimator lacks: a hypothesis test with a known
+null distribution, giving a *p*-value on "this spread is a random walk" — but no
+timescale. Together they answer different questions.
+
+| Pair | half-life | VR(8) | *p* (robust) | Reading |
+| --- | ---: | ---: | ---: | --- |
+| MA/V | 29.7 | 0.723 | **0.0012** | mean-reverting |
+| HD/LOW | 109.1 | 0.804 | 0.0267 | marginal |
+| KO/PEP | 70.0 | 0.926 | 0.475 | random walk |
+| GS/MS | 155.8 | 0.942 | 0.530 | random walk |
+| **XOM/CVX** | **395.0** | 0.903 | **0.524** | **random walk** |
+
+**XOM/CVX is the case worth looking at.** It returns a *finite* 395-bar
+half-life, which invites a mean-reversion reading. The variance ratio says
+*p* = 0.52 — indistinguishable from a random walk. The documented bias, observed
+on real market data rather than argued in the abstract.
+
+Two implementation notes that matter:
+
+- **The heteroskedasticity-robust null is the one reported.** These returns have
+  kurtosis ≈ 14, so the homoskedastic standard error is not trustworthy. Two of
+  twenty horizon-tests flip from significant to not once heteroskedasticity is
+  allowed for — both on HD/LOW, including *q* = 2 going from *p* = 0.005 to
+  *p* = 0.12. Reading the homoskedastic column alone would have promoted HD/LOW
+  to a clear pass, so `rejects_random_walk()` is keyed to the robust *p*-value
+  only and the choice cannot be exercised in the flattering direction.
+- **HD/LOW would not survive a multiplicity correction** across four horizons and
+  five pairs. Only MA/V is unambiguous.
+
+
 ---
 
 ## Why it underperforms: the estimator, not the edge

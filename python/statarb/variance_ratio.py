@@ -309,6 +309,15 @@ def _z_statistics(series: np.ndarray, q: int, vr: float) -> tuple[float, float]:
     # sum of squared cross-products at lag k to the squared sum of squares,
     # so a period of high volatility inflates numerator and denominator
     # together and does not by itself register as autocorrelation.
+    #
+    # Note the absence of any 1/nq factor here: theta is already the variance
+    # of (VR - 1) rather than of sqrt(nq)*(VR - 1), because the squared sum in
+    # the denominator carries the sample size. Inserting an nq the way the
+    # homoskedastic branch above needs one inflates theta by a factor of nq and
+    # collapses every robust z-statistic toward zero, so the test would never
+    # reject anything and would look reassuringly well-behaved while doing it.
+    # On IID Gaussian increments theta must come out close to phi_homo, which
+    # is what test_the_two_nulls_agree_on_homoskedastic_data pins.
     squared = centred**2
     denominator = float(np.sum(squared)) ** 2
     if denominator <= 0.0:
@@ -317,7 +326,7 @@ def _z_statistics(series: np.ndarray, q: int, vr: float) -> tuple[float, float]:
     theta = 0.0
     for k in range(1, q):
         numerator = float(np.sum(squared[k:] * squared[:-k]))
-        delta_k = numerator * nq / denominator
+        delta_k = numerator / denominator
         weight = 2.0 * (q - k) / q
         theta += weight * weight * delta_k
 

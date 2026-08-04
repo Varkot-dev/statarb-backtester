@@ -153,6 +153,31 @@ def main() -> int:
     else:
         print("note: real data unavailable in this run; skipping those checks")
 
+    # ------------------------------------------------------- variance ratio
+    if real.get("available"):
+        for r in real["results"]:
+            vr = [v for v in r.get("variance_ratio", []) if v["horizon"] == 8]
+            if not vr:
+                continue
+            v = vr[0]
+            c.contains(f"{v['variance_ratio']:.3f}", f"VR(8) for {r['pair']}")
+            # The README quotes small p-values at 4dp and larger ones at 3dp,
+            # which is the right precision for each; accept either rendering.
+            c.check(
+                f"{v['p_robust']:.4f}" in c.text or f"{v['p_robust']:.3f}" in c.text,
+                f"VR p-value for {r['pair']} "
+                f"(expected {v['p_robust']:.4f} or {v['p_robust']:.3f})",
+            )
+        # The README's headline VR claim: XOM/CVX has a finite half-life but is
+        # not distinguishable from a random walk.
+        xom = next((r for r in real["results"] if r["pair"] == "XOM/CVX"), None)
+        if xom:
+            v8 = [v for v in xom["variance_ratio"] if v["horizon"] == 8][0]
+            c.check(
+                not v8["rejects_random_walk"],
+                "README claims XOM/CVX is not distinguishable from a random walk",
+            )
+
     # ---------------------------------------------------------- diagnostics
     if "diagnostics" in summary:
         d = summary["diagnostics"]

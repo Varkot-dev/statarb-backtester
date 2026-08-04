@@ -36,6 +36,7 @@ from statarb.cointegration import analyse_pair  # noqa: E402
 from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
 from statarb.significance import assess  # noqa: E402
+from statarb.variance_ratio import variance_ratio_test  # noqa: E402
 from statarb.diagnostics import (  # noqa: E402
     MIN_WINDOW_HALF_LIFE_RATIO,
     deflated_sharpe_threshold,
@@ -238,6 +239,18 @@ def process_real_data() -> dict:
                 trades, bars["nav"].to_numpy(), bars_per_year=252.0,
                 risk_free_annual=0.04,
             ).to_dict()
+            # Variance ratio on the spread. Complements the half-life estimate:
+            # the half-life gives a timescale with no significance and is biased
+            # toward finding reversion on near-unit-root series; the VR test
+            # gives a p-value on the random-walk null and no timescale.
+            import numpy as _np
+            from statarb.cointegration import ols_hedge_ratio as _ols
+            _la = _np.log(frame["price_a"].to_numpy(dtype=float))
+            _lb = _np.log(frame["price_b"].to_numpy(dtype=float))
+            _, _beta = _ols(_la, _lb)
+            vr_rows = [
+                v.to_dict() for v in variance_ratio_test(_la - _beta * _lb)
+            ]
             charts = {
                 "equity": str(
                     report.plot_equity_curve(
@@ -266,6 +279,7 @@ def process_real_data() -> dict:
                     "cointegration": stats.to_dict(),
                     "metrics": metrics,
                     "significance": significance,
+                    "variance_ratio": vr_rows,
                     "charts": charts,
                 }
             )
