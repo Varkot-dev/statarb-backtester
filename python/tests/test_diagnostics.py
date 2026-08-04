@@ -246,3 +246,56 @@ def test_walk_forward_declines_when_the_sample_is_too_short(tmp_path):
     )
     prices = generate_cointegrated(spec, seed=5)
     assert walk_forward(ENGINE, tmp_path, prices, "SHORT") is None
+
+
+# --------------------------------------------------------------------------
+# Walk-forward selection
+# --------------------------------------------------------------------------
+
+
+def test_walk_forward_summary_refuses_to_over_read_a_small_sample():
+    """**The guard against reporting a 2-pair average as a result.**
+
+    The drop rule discards any pair whose half-life demands a window longer
+    than the out-of-sample segment supports. Measured on no-edge data it keeps
+    only ~3.6%, so the surviving mean carries a standard error around 0.23 —
+    wide enough that a 2-pair average cannot distinguish an edge from noise.
+
+    The summary must say so rather than reporting the mean bare.
+    """
+    from statarb.diagnostics import WalkForwardRow, WalkForwardSummary
+
+    rows = [
+        WalkForwardRow("A/B", 30.0, 150, 0.44, 7, 1.03),
+        WalkForwardRow("C/D", 43.0, 214, -0.13, 5, -0.27),
+    ]
+    summary = WalkForwardSummary(rows=rows, n_dropped=3, dropped_pairs=["E/F", "G/H", "I/J"])
+
+    assert summary.n_kept == 2
+    assert summary.mean_oos_sharpe == pytest.approx(0.155, abs=0.01)
+    assert np.isfinite(summary.se_mean_oos_sharpe)
+    verdict = summary.verdict()
+    assert "only 2 of 5" in verdict
+    assert "cannot distinguish an edge from noise" in verdict
+
+
+def test_walk_forward_summary_reports_the_standard_error_when_it_can():
+    """With enough survivors the mean is reported with its uncertainty."""
+    from statarb.diagnostics import WalkForwardRow, WalkForwardSummary
+
+    rows = [
+        WalkForwardRow(f"P{i}", 30.0, 150, 0.1 * i, 10, 0.5) for i in range(5)
+    ]
+    summary = WalkForwardSummary(rows=rows, n_dropped=1, dropped_pairs=["Q"])
+    assert "±" in summary.verdict() or "SE" in summary.verdict()
+    assert summary.se_mean_oos_sharpe > 0
+
+
+def test_walk_forward_summary_handles_zero_survivors():
+    """No survivor means no conclusion, stated plainly rather than as nan."""
+    from statarb.diagnostics import WalkForwardSummary
+
+    summary = WalkForwardSummary(rows=[], n_dropped=5, dropped_pairs=list("ABCDE"))
+    assert summary.n_kept == 0
+    assert np.isnan(summary.mean_oos_sharpe)
+    assert "no out-of-sample conclusion" in summary.verdict()

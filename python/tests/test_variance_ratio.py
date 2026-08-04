@@ -516,3 +516,84 @@ def test_accepts_a_python_list():
     assert variance_ratio(values, q=4) == pytest.approx(
         variance_ratio(np.asarray(values), q=4)
     )
+
+
+# --------------------------------------------------------------------------
+# Power — the property whose absence let a wrong claim ship
+# --------------------------------------------------------------------------
+
+
+def test_power_is_high_for_fast_mean_reversion():
+    """A test with no power at fast half-lives would be useless."""
+    from statarb.variance_ratio import estimate_power
+
+    power = estimate_power(half_life=10.0, n_obs=2515, horizon=8, n_reps=120)
+    assert power > 0.7, f"power {power:.2f} at half-life 10 is too low to be useful"
+
+
+def test_power_collapses_at_long_half_lives():
+    """**The finding that forced a README retraction.**
+
+    At a 395-bar half-life on 2,515 bars the test's power is indistinguishable
+    from its size, so a non-rejection says nothing about the series. The README
+    previously read XOM/CVX's *p* = 0.52 as evidence of a random walk; it is
+    evidence of the test's blind spot.
+    """
+    from statarb.variance_ratio import estimate_power
+
+    power = estimate_power(half_life=395.0, n_obs=2515, horizon=8, n_reps=200)
+    assert power < 0.15, (
+        f"power {power:.2f} at half-life 395 is higher than measured; "
+        "if this genuinely improved, the README's caveat should be revisited"
+    )
+
+
+def test_power_decreases_monotonically_with_half_life():
+    """Slower reversion is harder to detect. The ordering is the claim."""
+    from statarb.variance_ratio import estimate_power
+
+    powers = [
+        estimate_power(half_life=hl, n_obs=2515, horizon=8, n_reps=100)
+        for hl in (10.0, 40.0, 150.0)
+    ]
+    assert powers[0] > powers[1] > powers[2], f"non-monotone power: {powers}"
+
+
+def test_a_low_power_non_rejection_is_not_called_a_random_walk():
+    """**The guard against absence-of-evidence-as-evidence-of-absence.**
+
+    A slow-reverting spread that the test cannot resolve must be reported as
+    inconclusive, never as consistent with a random walk.
+    """
+    from statarb.variance_ratio import test_with_power
+
+    rng = np.random.default_rng(5)
+    n, phi = 2515, 2.0 ** (-1.0 / 395.0)
+    series = np.zeros(n)
+    for t in range(1, n):
+        series[t] = phi * series[t - 1] + rng.normal(0.0, 1.0)
+
+    result = test_with_power(series, half_life=395.0, n_reps=120)
+    assert not result.is_informative
+    verdict = result.verdict()
+    assert "INCONCLUSIVE" in verdict
+    assert "Not evidence of a random walk" in verdict
+
+
+def test_a_high_power_non_rejection_is_reported_as_a_random_walk():
+    """The complement: when the test CAN see, a non-rejection is meaningful."""
+    from statarb.variance_ratio import test_with_power
+
+    walk = np.cumsum(np.random.default_rng(9).normal(0.0, 1.0, 2515))
+    result = test_with_power(walk, half_life=10.0, n_reps=120)
+    assert result.is_informative
+    assert not result.result.rejects_random_walk()
+    assert "random walk" in result.verdict()
+
+
+def test_power_is_nan_for_a_non_finite_half_life():
+    """A random walk has no alternative to have power against."""
+    from statarb.variance_ratio import estimate_power
+
+    assert np.isnan(estimate_power(float("inf"), 2515))
+    assert np.isnan(estimate_power(-5.0, 2515))

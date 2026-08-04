@@ -421,6 +421,93 @@ def deflated_sharpe_threshold(
 
 
 @dataclass(frozen=True)
+class WalkForwardSummary:
+    """Aggregate of a walk-forward run, including what it dropped.
+
+    **Why the drop count belongs in the summary.** The walk-forward rule
+    discards any pair whose half-life demands a window longer than the
+    out-of-sample segment supports. That refusal is honest — the alternative is
+    reporting a result computed under conditions the method itself calls
+    insufficient — but it is also *selective*, and reporting only the surviving
+    mean hides two problems.
+
+    First, the rule is a hard threshold on the signal itself: ``window =
+    5 * half_life`` and the cap is ``len(oos) // 4``, so it reduces to
+    "drop if half_life > ~50 bars". Every kept pair therefore has a short
+    half-life, which is precisely the regime this repository's own headline
+    finding says performs best. The surviving mean is conditioned on the
+    favourable regime.
+
+    Second, and more decisively, the survivors are too few to support a
+    conclusion. Measured on 250 independent random walks — data with no edge at
+    all — the rule keeps **3.6%**, and the standard error of the mean over
+    that many survivors is roughly 0.23. A reported mean of -0.029 is
+    indistinguishable from anything in [-0.5, +0.4].
+
+    So this type reports the mean, its standard error, the number kept, the
+    number dropped, and a verdict that refuses to over-read a small sample.
+    """
+
+    rows: list["WalkForwardRow"]
+    n_dropped: int
+    dropped_pairs: list[str]
+
+    @property
+    def n_kept(self) -> int:
+        return len(self.rows)
+
+    @property
+    def mean_oos_sharpe(self) -> float:
+        if not self.rows:
+            return float("nan")
+        return float(np.mean([r.oos_sharpe for r in self.rows]))
+
+    @property
+    def se_mean_oos_sharpe(self) -> float:
+        """Standard error of the reported mean.
+
+        With one survivor this is undefined; with two it is enormous. Reporting
+        it alongside the mean is what stops the mean being read as precise.
+        """
+        if len(self.rows) < 2:
+            return float("nan")
+        values = np.array([r.oos_sharpe for r in self.rows])
+        return float(values.std(ddof=1) / np.sqrt(len(values)))
+
+    def verdict(self) -> str:
+        """A reading that cannot overstate a two-pair average."""
+        if self.n_kept == 0:
+            return (
+                f"no pair survived the walk-forward rule "
+                f"({self.n_dropped} dropped for insufficient out-of-sample "
+                f"length); no out-of-sample conclusion is available"
+            )
+        if self.n_kept < 3:
+            return (
+                f"only {self.n_kept} of {self.n_kept + self.n_dropped} pairs "
+                f"survived; mean out-of-sample Sharpe {self.mean_oos_sharpe:+.3f} "
+                f"is reported for completeness but a {self.n_kept}-pair average "
+                f"cannot distinguish an edge from noise"
+            )
+        return (
+            f"{self.n_kept} of {self.n_kept + self.n_dropped} pairs survived; "
+            f"mean out-of-sample Sharpe {self.mean_oos_sharpe:+.3f} "
+            f"± {self.se_mean_oos_sharpe:.3f} (SE)"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "rows": [r.to_dict() for r in self.rows],
+            "n_kept": self.n_kept,
+            "n_dropped": self.n_dropped,
+            "dropped_pairs": self.dropped_pairs,
+            "mean_oos_sharpe": self.mean_oos_sharpe,
+            "se_mean_oos_sharpe": self.se_mean_oos_sharpe,
+            "verdict": self.verdict(),
+        }
+
+
+@dataclass(frozen=True)
 class WalkForwardRow:
     """One pair's out-of-sample result under walk-forward selection."""
 

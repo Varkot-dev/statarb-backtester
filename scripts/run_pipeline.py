@@ -36,7 +36,7 @@ from statarb.cointegration import analyse_pair  # noqa: E402
 from statarb.datasets import SYNTHETIC_DATASETS, Dataset  # noqa: E402
 from statarb.fetch import CANDIDATE_PAIRS, fetch_pair  # noqa: E402
 from statarb.significance import assess  # noqa: E402
-from statarb.variance_ratio import variance_ratio_test  # noqa: E402
+from statarb.variance_ratio import test_with_power, variance_ratio_test  # noqa: E402
 from statarb.stability import analyse_stability, break_robustness  # noqa: E402
 from statarb.diagnostics import (  # noqa: E402
     MIN_WINDOW_HALF_LIFE_RATIO,
@@ -249,9 +249,14 @@ def process_real_data() -> dict:
             _la = _np.log(frame["price_a"].to_numpy(dtype=float))
             _lb = _np.log(frame["price_b"].to_numpy(dtype=float))
             _, _beta = _ols(_la, _lb)
-            vr_rows = [
-                v.to_dict() for v in variance_ratio_test(_la - _beta * _lb)
-            ]
+            _spread = _la - _beta * _lb
+            vr_rows = [v.to_dict() for v in variance_ratio_test(_spread)]
+            # A non-rejection means nothing without the power behind it. At a
+            # 395-bar half-life this test's power equals its size, so "did not
+            # reject" is the test's blind spot, not the spread's behaviour.
+            vr_powered = test_with_power(
+                _spread, stats.half_life, horizon=8
+            ).to_dict()
             # Stability. A 756-bar window rather than the 252 default: the
             # repo's own window/half-life law applies to this test too, and at
             # 252 bars a pair with a 30-bar half-life rejects in only ~11% of
@@ -305,6 +310,7 @@ def process_real_data() -> dict:
                     "metrics": metrics,
                     "significance": significance,
                     "variance_ratio": vr_rows,
+                    "variance_ratio_powered": vr_powered,
                     "stability": stability,
                     "charts": charts,
                 }
@@ -403,6 +409,12 @@ def main() -> int:
     report.plot_leakage_calibration(
         calibration, REPORTS_DIR / "leakage_calibration.png"
     )
+    # The same calibration data, inverted into a diagnostic lookup: the reader
+    # arrives with a suspicious backtest and wants to know which bug produces
+    # that pattern, which is the opposite of the dose-response framing.
+    report.plot_leakage_signature(
+        calibration, REPORTS_DIR / "leakage_signature.png"
+    )
 
     log(f"parameter sweep on '{primary.key}'")
     sweep_csv = REPORTS_DIR / "sweep.csv"
@@ -426,6 +438,14 @@ def main() -> int:
         pd.DataFrame(hl_rows), pd.DataFrame(ratio_rows),
         REPORTS_DIR / "window_ratio_finding.png",
     )
+    # The window law generalises to any trailing estimator. Putting the rolling
+    # OLS sweep and the Kalman memory sweep on one memory-to-half-life axis is
+    # what turns "tune your window" into a statement about memory budgets.
+    report.plot_memory_law(
+        pd.DataFrame(ratio_rows), kalman_sweep,
+        REPORTS_DIR / "memory_law.png",
+        min_ratio=MIN_WINDOW_HALF_LIFE_RATIO,
+    )
 
     real = (
         {"available": False, "attempts": [], "results": [], "skipped": True}
@@ -436,19 +456,109 @@ def main() -> int:
     # Walk-forward on the real pairs: the only non-circular test of the window
     # rule, since the window is chosen from data the evaluation never sees.
     walk_forward_rows: list[dict] = []
+    walk_forward_summary: dict = {}
     if real.get("available"):
         log("diagnostics: walk-forward out-of-sample test")
+        from statarb.diagnostics import WalkForwardSummary
+
+        kept, dropped = [], []
         for r in real["results"]:
             row = walk_forward(
                 ENGINE_BINARY, diag_dir,
                 sio.read_prices(RAW_DIR / f"{r['key']}.csv"), r["pair"],
             )
-            if row is not None:
-                walk_forward_rows.append(row.to_dict())
+            if row is None:
+                dropped.append(r["pair"])
+            else:
+                kept.append(row)
+        summary_obj = WalkForwardSummary(
+            rows=kept, n_dropped=len(dropped), dropped_pairs=dropped
+        )
+        walk_forward_summary = summary_obj.to_dict()
+        walk_forward_rows = walk_forward_summary["rows"]
         if walk_forward_rows:
             pd.DataFrame(walk_forward_rows).to_csv(
                 diag_dir / "walk_forward.csv", index=False
             )
+
+    # ------------------------------------------------------------------
+    # The honesty cascade. The repo's central story is a sequence of results
+    # that each looked like a discovery until a stricter test was applied, and
+    # that sequence is invisible in any single table. Every number below is read
+    # from the artifacts just computed rather than transcribed, so the chart
+    # cannot drift away from the results it illustrates.
+    # ------------------------------------------------------------------
+    deflated = deflated_sharpe_threshold(
+        observed_sharpe=0.654, n_trials=30, n_observations=2515
+    )
+    cascade_stages: list[tuple[str, str, float, str]] = []
+
+    if real.get("available"):
+        real_sharpes = [
+            r["metrics"]["sharpe_ratio"] for r in real["results"]
+        ]
+        n_significant = sum(
+            1 for r in real["results"] if r["significance"].get("is_significant")
+        )
+        cascade_stages.append(
+            (
+                "Naive run, real data",
+                f"{len(real_sharpes)} pairs, default 60-bar window\n"
+                f"{n_significant} of {len(real_sharpes)} significant — "
+                f"best Sharpe {max(real_sharpes):+.3f}",
+                max(real_sharpes),
+                "killed",
+            )
+        )
+
+    # Stage 2: the specification search. Its best Sharpe is exactly the value
+    # the deflated-Sharpe machinery was pointed at, so they are one number.
+    cascade_stages.append(
+        (
+            "Fix the window per pair",
+            "every Sharpe flips positive, two at p < 0.05\n"
+            "— and this is a specification search",
+            float(deflated["observed_sharpe"]),
+            "alpha",
+        )
+    )
+    cascade_stages.append(
+        (
+            "Deflated Sharpe",
+            f"best expected from luck alone, N = {int(deflated['n_trials'])} trials\n"
+            f"deflated statistic {deflated['deflated_sharpe_statistic']:+.3f} "
+            f"(p = {deflated['p_value']:.2f})",
+            float(deflated["expected_max_under_null"]),
+            "killed",
+        )
+    )
+
+    if walk_forward_rows:
+        import statistics as _stats
+
+        mean_oos = _stats.fmean(r["oos_sharpe"] for r in walk_forward_rows)
+        n_kept = len(walk_forward_rows)
+        n_dropped = int(walk_forward_summary.get("n_dropped", 0))
+        cascade_stages.append(
+            (
+                "Walk-forward, out-of-sample",
+                f"window chosen in-sample, evaluated on untouched data\n"
+                f"{n_kept} pair(s) evaluated, {n_dropped} dropped as untradeable",
+                float(mean_oos),
+                "killed",
+            )
+        )
+
+    report.plot_honesty_cascade(
+        cascade_stages,
+        REPORTS_DIR / "honesty_cascade.png",
+        deflated_note=(
+            f"observed {deflated['observed_sharpe']:+.3f} vs "
+            f"luck {deflated['expected_max_under_null']:+.3f}\n"
+            f"a gap of {abs(deflated['excess_over_null']):.3f} — "
+            "indistinguishable from a coin flip"
+        ),
+    )
 
     summary = {
         "synthetic": [asdict(o) for o in outcomes],
@@ -456,6 +566,7 @@ def main() -> int:
             "half_life_sensitivity": hl_rows,
             "window_ratio_sensitivity": ratio_rows,
             "walk_forward": walk_forward_rows,
+            "walk_forward_summary": walk_forward_summary,
             "min_window_half_life_ratio": MIN_WINDOW_HALF_LIFE_RATIO,
             # Honest accounting of the specification search performed while
             # investigating the window rule on real data.

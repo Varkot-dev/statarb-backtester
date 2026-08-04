@@ -160,11 +160,25 @@ Numerically indistinguishable from a coin flip.
 
 **The honest test** is walk-forward: estimate the half-life on the first 60% of
 the sample, derive the window from it, evaluate on data that played no part in
-the choice. Mean out-of-sample Sharpe: **+0.154**. Note that 3 of 5 pairs are
-*dropped* — their half-lives demand windows longer than the out-of-sample
-segment supports. That refusal is itself the finding: most real large-cap pairs
-revert too slowly to trade on daily bars with any window a decade of data
-supports.
+the choice. Mean out-of-sample Sharpe over the surviving pairs:
+**+0.154 ± 0.282** (SE).
+
+**But the drop rule is selective, and that matters more than the mean.**
+3 of 5 pairs are discarded
+(XOM/CVX, HD/LOW, GS/MS) because their half-lives demand a window
+longer than the out-of-sample segment supports. The refusal is honest — the
+alternative is reporting a result computed under conditions the method itself
+calls insufficient — but it is a hard threshold *on the signal*:
+`window = 5 × half-life` against a cap of `len(oos) // 4` reduces to
+**drop if half-life > ~50 bars**. Every survivor is therefore in the
+short-half-life regime that
+[the memory law](#1-the-window-to-half-life-law-is-about-memory) says performs
+best.
+
+Run on 250 independent random walks — no edge at all — the same rule keeps
+**3.6%**, and with that many survivors the standard error on the mean is ≈0.23.
+So a 2-pair average cannot distinguish an edge from noise in either
+direction. The figure above is reported for completeness, not as a result.
 
 **So: the methodological finding is real and reproducible. The alpha is not.**
 That distinction is the point of the whole project.
@@ -366,45 +380,42 @@ bad size means inventing them, which is not.
 
 ---
 
-## 4. A finite half-life is not evidence of mean reversion
+## 4. A finite half-life is not evidence of mean reversion — and neither is a large p-value
 
 The half-life estimator carries a documented warning: the OU regression is
 **biased downward on near-unit-root series**, so a genuine random walk returns a
-large-but-finite half-life rather than infinity — the same bias that forces
-Dickey-Fuller to use non-standard critical values.
+large-but-finite half-life rather than infinity. The
+[variance ratio test](python/statarb/variance_ratio.py) (Lo & MacKinlay, 1988)
+is the complement it lacks — a hypothesis test with a known null distribution.
 
-Prose is a weak way to make that point, so it is measured. The
-[variance ratio test](python/statarb/variance_ratio.py) (Lo & MacKinlay, 1988) is
-the complement the half-life estimator lacks: a hypothesis test with a known
-null distribution, giving a *p*-value on "this spread is a random walk" — but no
-timescale. Together they answer different questions.
+**But a p-value is only as good as the power behind it**, and this is where an
+earlier version of this section was wrong. It presented XOM/CVX — finite 395-bar
+half-life, *p* = 0.52 — as the clean illustration that a finite half-life proves
+nothing. It is actually an illustration of the *test's* blind spot:
 
-| Pair | half-life | VR(8) | *p* (robust) | Reading |
-| --- | ---: | ---: | ---: | --- |
-| MA/V | 29.7 | 0.723 | **0.0012** | mean-reverting |
-| HD/LOW | 109.1 | 0.804 | 0.0267 | marginal |
-| KO/PEP | 70.0 | 0.926 | 0.475 | random walk |
-| GS/MS | 155.8 | 0.942 | 0.530 | random walk |
-| **XOM/CVX** | **395.0** | 0.903 | **0.524** | **random walk** |
+| Pair | half-life | VR(8) | *p* (robust) | power | Reading |
+| --- | ---: | ---: | ---: | ---: | :--- |
+| MA/V | 30 | 0.723 | 0.0012 | **0.27** | mean-reverting |
+| HD/LOW | 109 | 0.804 | 0.0267 | **0.06** | mean-reverting |
+| KO/PEP | 70 | 0.926 | 0.4752 | **0.07** | **inconclusive** |
+| GS/MS | 156 | 0.942 | 0.5299 | **0.06** | **inconclusive** |
+| XOM/CVX | 395 | 0.903 | 0.5238 | **0.07** | **inconclusive** |
 
-**XOM/CVX is the case worth looking at.** It returns a *finite* 395-bar
-half-life, which invites a mean-reversion reading. The variance ratio says
-*p* = 0.52 — indistinguishable from a random walk. The documented bias, observed
-on real market data rather than argued in the abstract.
+Power is estimated by simulating AR(1) spreads with exactly the observed
+half-life and sample length, then measuring the rejection rate. At a 395-bar
+half-life it is **0.07 — indistinguishable from the test's own size of ~0.05**.
+The test could not detect mean reversion that slow even if it were certainly
+there, so its non-rejection carries no information about XOM/CVX at all.
 
-Two implementation notes:
+**Only MA/V has enough power for its verdict to mean anything.** The other four
+are inconclusive, not random walks. `stability.py` already stated this asymmetry
+carefully for CUSUM; `variance_ratio.py` did not, so it now returns the power
+alongside every result and refuses to phrase a low-power non-rejection as
+evidence of absence.
 
-- **The heteroskedasticity-robust null is the one reported.** These returns have
-  kurtosis ≈ 14, so the homoskedastic standard error is not trustworthy. Two of
-  twenty horizon-tests flip from significant to not once heteroskedasticity is
-  allowed for — both on HD/LOW, including *q* = 2 going from *p* = 0.005 to
-  *p* = 0.12. Reading the homoskedastic column alone would have promoted HD/LOW
-  to a clear pass, so `rejects_random_walk()` is keyed to the robust *p*-value
-  only, and the choice cannot be exercised in the flattering direction.
-- **HD/LOW would not survive a multiplicity correction** across four horizons and
-  five pairs. Only MA/V is unambiguous.
+The half-life warning still stands — it just cannot be demonstrated with a test
+that has no power at the half-life in question.
 
----
 
 ## The no-lookahead guarantee
 

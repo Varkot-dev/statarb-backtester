@@ -186,6 +186,29 @@ def main() -> int:
                 "README claims XOM/CVX is not distinguishable from a random walk",
             )
 
+    # ------------------------------------------------- variance ratio power
+    if real.get("available"):
+        for r in real["results"]:
+            v = r.get("variance_ratio_powered")
+            if not v:
+                continue
+            c.contains(f"**{v['estimated_power']:.2f}**", f"VR power for {r['pair']}")
+        # The claim the section rests on: only MA/V is informative.
+        informative = [
+            r["pair"] for r in real["results"]
+            if r.get("variance_ratio_powered", {}).get("is_informative")
+        ]
+        c.check(
+            informative == ["MA/V"],
+            f"README claims only MA/V has adequate VR power; got {informative}",
+        )
+        xom = next((r for r in real["results"] if r["pair"] == "XOM/CVX"), None)
+        if xom:
+            c.check(
+                not xom["variance_ratio_powered"]["is_informative"],
+                "README claims the XOM/CVX non-rejection is uninformative",
+            )
+
     # ------------------------------------------------------------- stability
     if real.get("available"):
         for r in real["results"]:
@@ -262,12 +285,21 @@ def main() -> int:
             not ds["survives"],
             "README claims the searched result does NOT survive deflation",
         )
-        wf = d["walk_forward"]
-        if wf:
-            import statistics
-            mean_oos = statistics.fmean(r["oos_sharpe"] for r in wf)
+        wfs = d.get("walk_forward_summary")
+        if wfs and wfs.get("n_kept", 0) > 0:
             c.contains(
-                f"{mean_oos:+.3f}".replace("-", "−"), "walk-forward mean OOS Sharpe"
+                f"{wfs['mean_oos_sharpe']:+.3f}".replace("-", "−"),
+                "walk-forward mean OOS Sharpe",
+            )
+            # The mean must never appear without its standard error. Reporting a
+            # 2-pair average as a point estimate is the error this guards.
+            c.contains(
+                f"{wfs['se_mean_oos_sharpe']:.3f}",
+                "walk-forward SE must be reported alongside the mean",
+            )
+            c.check(
+                f"{wfs['n_dropped']} of {wfs['n_kept'] + wfs['n_dropped']}" in c.text,
+                "README must state how many pairs the drop rule discarded",
             )
 
     # ------------------------------------------------------- kalman RMSE

@@ -396,3 +396,167 @@ def variance_ratio_test(
             )
         )
     return results
+
+
+# ---------------------------------------------------------------------------
+# Power
+# ---------------------------------------------------------------------------
+#
+# Why this section exists
+# -----------------------
+#
+# A variance ratio test that fails to reject tells you one of two very
+# different things: the spread is a random walk, or the test could not have
+# detected mean reversion at that speed even if it were there. Reporting the
+# first when the truth is the second is "absence of evidence as evidence of
+# absence", and this module previously invited exactly that reading.
+#
+# The concrete case: XOM/CVX has an estimated half-life of 395 bars and a
+# variance-ratio p of 0.52, which the README presented as its cleanest
+# illustration that a finite half-life is not evidence of mean reversion.
+# Measured power at that half-life, n=2515, q=8, is **0.040** — against a
+# measured size of 0.040. The test has literally no power there. The
+# illustration was of the test's blind spot, not of the spread's behaviour.
+#
+# `stability.py` states this asymmetry carefully for CUSUM. This module did not,
+# so it does now — and quantitatively, by simulation, rather than as a caveat.
+
+#: Power below which a non-rejection carries no information.
+#:
+#: At 0.20 the test misses four true positives in five, so "did not reject" is
+#: essentially uninformative. This is a reporting threshold, not a hard cutoff:
+#: the estimated power is always returned so a reader can apply their own.
+UNINFORMATIVE_POWER = 0.20
+
+#: Simulation replications for the power estimate. 200 gives a standard error of
+#: about 0.03 on a power near 0.5, which is ample for deciding whether a result
+#: is informative. It is the dominant cost in this module, so it is not larger.
+DEFAULT_POWER_REPS = 200
+
+
+def estimate_power(
+    half_life: float,
+    n_obs: int,
+    horizon: int = 8,
+    alpha: float = 0.05,
+    n_reps: int = DEFAULT_POWER_REPS,
+    seed: int = 20260804,
+) -> float:
+    """Estimate the test's power against an AR(1) with the given half-life.
+
+    Simulates ``n_reps`` mean-reverting series with exactly this half-life and
+    length, runs the test on each, and returns the rejection rate. That is the
+    probability the test would detect mean reversion this slow, on a sample
+    this long, if it were genuinely there.
+
+    **How to read the result.** Power near the nominal size (0.05) means the
+    test cannot distinguish this half-life from a random walk at all, so a
+    non-rejection says nothing about the spread. Power near 1 means a
+    non-rejection is genuine evidence of a random walk.
+
+    Args:
+        half_life: The half-life to test against, in bars. Use the estimate from
+            :func:`statarb.cointegration.estimate_half_life`.
+        n_obs: Length of the series being tested.
+        horizon: The aggregation horizon ``q``.
+        alpha: Significance level.
+        n_reps: Simulation replications.
+        seed: PRNG seed, so a reported power is reproducible.
+
+    Returns:
+        Estimated power in [0, 1]. Returns ``nan`` for a non-finite half-life,
+        since a random walk has no alternative to have power against.
+    """
+    if not np.isfinite(half_life) or half_life <= 0 or n_obs < 4 * horizon:
+        return float("nan")
+
+    phi = 2.0 ** (-1.0 / half_life)
+    rng = np.random.default_rng(seed)
+    rejections = 0
+    for _ in range(n_reps):
+        # AR(1) started at its stationary distribution, so the early bars are
+        # not artificially close to the mean.
+        innovations = rng.normal(0.0, 1.0, size=n_obs)
+        series = np.empty(n_obs)
+        series[0] = rng.normal(0.0, 1.0 / np.sqrt(1.0 - phi**2))
+        for t in range(1, n_obs):
+            series[t] = phi * series[t - 1] + innovations[t]
+        result = variance_ratio_test(series, horizons=(horizon,))[0]
+        if result.rejects_random_walk(alpha=alpha):
+            rejections += 1
+    return rejections / n_reps
+
+
+@dataclass(frozen=True)
+class PoweredVarianceRatio:
+    """A variance ratio result together with the power behind it.
+
+    The point of pairing them is that neither is interpretable alone. A p-value
+    of 0.52 means "random walk" if power is 0.9 and means "this test cannot
+    see anything at this timescale" if power is 0.04, and those are opposite
+    conclusions from the same number.
+    """
+
+    result: VarianceRatioResult
+    half_life: float
+    estimated_power: float
+
+    @property
+    def is_informative(self) -> bool:
+        """Whether a non-rejection from this test carries information."""
+        return bool(
+            np.isfinite(self.estimated_power)
+            and self.estimated_power >= UNINFORMATIVE_POWER
+        )
+
+    def verdict(self) -> str:
+        """A reading that cannot be mistaken for evidence of absence."""
+        if self.result.rejects_random_walk():
+            return (
+                f"mean-reverting (VR={self.result.variance_ratio:.3f}, "
+                f"p={self.result.p_robust:.4f})"
+            )
+        if not self.is_informative:
+            return (
+                f"INCONCLUSIVE — the test has power {self.estimated_power:.2f} "
+                f"against a half-life of {self.half_life:.0f} bars, so it could "
+                f"not detect mean reversion this slow even if present. "
+                f"Not evidence of a random walk."
+            )
+        return (
+            f"consistent with a random walk (VR={self.result.variance_ratio:.3f}, "
+            f"p={self.result.p_robust:.3f}, power {self.estimated_power:.2f})"
+        )
+
+    def to_dict(self) -> dict:
+        out = self.result.to_dict()
+        out.update(
+            {
+                "half_life": self.half_life,
+                "estimated_power": self.estimated_power,
+                "is_informative": self.is_informative,
+                "verdict": self.verdict(),
+            }
+        )
+        return out
+
+
+def test_with_power(
+    series: np.ndarray,
+    half_life: float,
+    horizon: int = 8,
+    alpha: float = 0.05,
+    n_reps: int = DEFAULT_POWER_REPS,
+) -> PoweredVarianceRatio:
+    """Run the test and estimate its power against the observed half-life.
+
+    This is the function to prefer over :func:`variance_ratio_test` when a
+    non-rejection might be reported, which in practice is always.
+    """
+    result = variance_ratio_test(series, horizons=(horizon,))[0]
+    power = estimate_power(
+        half_life, len(series), horizon=horizon, alpha=alpha, n_reps=n_reps
+    )
+    return PoweredVarianceRatio(
+        result=result, half_life=half_life, estimated_power=power
+    )

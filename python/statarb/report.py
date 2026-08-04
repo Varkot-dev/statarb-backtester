@@ -557,6 +557,554 @@ def plot_leakage_calibration(calibration: pd.DataFrame, out_path: str | Path) ->
     return out_path
 
 
+def plot_honesty_cascade(
+    stages: list[tuple[str, str, float, str]],
+    out_path: str | Path,
+    deflated_note: str = "",
+) -> Path:
+    """Plot the sequence of results that each looked like alpha and then wasn't.
+
+    Why a cascade rather than a bar chart: the argument is *ordinal*. Each row
+    is a more demanding test than the one above it, and the claim is that the
+    apparent edge shrinks monotonically as the test gets more honest. A bar
+    chart invites the reader to compare heights in any order; a descending
+    cascade with a connecting spine forces the sequence, which is the point.
+
+    Bars grow rightward from a common zero so the eye reads magnitude, and each
+    stage is annotated in place — the reader should never have to consult a
+    legend to learn which test knocked which result down.
+
+    Colour carries no information the shape does not: surviving stages are drawn
+    solid and knocked-down stages hatched, so the figure is legible in greyscale
+    and to a colour-blind reader.
+
+    Args:
+        stages: ``(label, detail, value, verdict)`` per row, top to bottom, in
+            the order the tests were applied. ``verdict`` is ``"alpha"`` for a
+            result that looked like a discovery or ``"killed"`` for one that
+            did not survive.
+        out_path: Destination PNG.
+        deflated_note: Text placed against the deflated-Sharpe row. The near
+            equality of observed and luck-expected Sharpe is the crux of the
+            whole figure and is too important to leave to the axis.
+    """
+    out_path = Path(out_path)
+
+    fig, ax = plt.subplots(figsize=(11.5, 5.6), layout="constrained")
+
+    n = len(stages)
+    y_positions = list(range(n - 1, -1, -1))
+    values = [v for _, _, v, _ in stages]
+    span = max(abs(min(values)), abs(max(values)), 0.1)
+
+    for y, (label, detail, value, verdict) in zip(y_positions, stages):
+        killed = verdict != "alpha"
+        # Hatching, not hue, is what survives a greyscale print.
+        ax.barh(
+            y,
+            value,
+            height=0.46,
+            color=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
+            alpha=0.30 if killed else 0.85,
+            hatch="///" if killed else None,
+            edgecolor=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
+            linewidth=1.1,
+            zorder=3,
+        )
+        # The value sits on the far side of the bar tip, so it never collides
+        # with the bar however long the bar is.
+        ax.annotate(
+            f"{value:+.3f}",
+            xy=(value, y),
+            xytext=(6 if value >= 0 else -6, 0),
+            textcoords="offset points",
+            va="center",
+            ha="left" if value >= 0 else "right",
+            fontsize=10,
+            fontweight="600",
+            color=COLOR_DRAWDOWN if killed else COLOR_EQUITY,
+            zorder=4,
+        )
+        # Row label to the left of the zero line, in the negative gutter.
+        ax.annotate(
+            label,
+            xy=(0, y + 0.16),
+            xytext=(-14, 0),
+            textcoords="offset points",
+            va="center",
+            ha="right",
+            fontsize=10,
+            fontweight="600",
+            color="#2b2b2b",
+        )
+        ax.annotate(
+            detail,
+            xy=(0, y - 0.20),
+            xytext=(-14, 0),
+            textcoords="offset points",
+            va="center",
+            ha="right",
+            fontsize=8.2,
+            color=COLOR_NEUTRAL,
+        )
+
+    # The connecting spine: an explicit downward arrow between consecutive
+    # stages, so the reader sees a sequence of knock-downs rather than four
+    # independent measurements that happen to be stacked.
+    spine_x = span * 0.045
+    for upper, lower in zip(y_positions, y_positions[1:]):
+        ax.annotate(
+            "",
+            xy=(spine_x, lower + 0.26),
+            xytext=(spine_x, upper - 0.26),
+            arrowprops={
+                "arrowstyle": "-|>",
+                "color": COLOR_NEUTRAL,
+                "linewidth": 1.1,
+                "shrinkA": 0,
+                "shrinkB": 0,
+            },
+            zorder=2,
+        )
+
+    if deflated_note:
+        # Anchored to the deflated row (index 2 from the top by construction of
+        # the caller's stage list) if it exists, otherwise to the last row. It
+        # sits in the gap *below* the row rather than on top of the bar, so it
+        # covers neither the hatching nor the value label.
+        note_y = (y_positions[2] if n > 2 else y_positions[-1]) - 0.52
+        ax.annotate(
+            deflated_note,
+            xy=(span * 0.02, note_y),
+            fontsize=8.6,
+            color=COLOR_DRAWDOWN,
+            va="center",
+            ha="left",
+            bbox={
+                "boxstyle": "round,pad=0.34",
+                "facecolor": "white",
+                "edgecolor": COLOR_DRAWDOWN,
+                "linewidth": 0.8,
+                "alpha": 0.96,
+            },
+            zorder=6,
+        )
+
+    ax.axvline(0.0, color=COLOR_NEUTRAL, linewidth=1.0, zorder=1)
+    ax.set_yticks([])
+    ax.set_ylim(-0.75, n - 0.25)
+    # Only as much negative room as the data actually needs. A symmetric range
+    # would spend half the canvas on an empty region and shrink every bar.
+    left = min(min(values), 0.0)
+    ax.set_xlim(left - span * 0.08 if left < 0 else -span * 0.03, span * 1.30)
+    ax.set_xlabel("Sharpe ratio")
+    ax.spines["left"].set_visible(False)
+    _style_axes(ax)
+    ax.grid(axis="y", visible=False)
+
+    # The subtitle occupies the line above the axes, so the title is lifted
+    # clear of it rather than being overprinted.
+    ax.annotate(
+        "each row is a stricter test than the one above it",
+        xy=(0.0, 1.015),
+        xycoords="axes fraction",
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color=COLOR_NEUTRAL,
+    )
+    ax.set_title(
+        "Every apparent edge, and the test that removed it",
+        loc="left",
+        fontsize=12.5,
+        fontweight="600",
+        pad=26,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def plot_memory_law(
+    ratio_rows: pd.DataFrame,
+    kalman_rows: pd.DataFrame,
+    out_path: str | Path,
+    min_ratio: float = 5.0,
+) -> Path:
+    """Plot both estimators against a shared memory-to-half-life axis.
+
+    Two estimators with nothing in common structurally — a rolling OLS window
+    with a hard cutoff, and a Kalman filter with no window at all, weighting the
+    past by exponential decay — are placed on one x-axis because their *memory*
+    is the quantity that turns out to matter. For the window that is the window
+    length; for the filter it is ``1/sqrt(Q/R)``. Both divided by the spread's
+    half-life.
+
+    The chart makes two claims at once, and needs both to be honest:
+
+    - **Both degrade.** The windowless estimator is not exempt, so the constraint
+      is a property of the estimation problem rather than an artifact of
+      windowing.
+    - **The windowed one degrades harder.** A hard cutoff discards the 61st
+      observation entirely while weighting the 60th fully; exponential decay has
+      no such discontinuity, and the gap between the two curves is the price of
+      that discontinuity.
+
+    The two series are distinguished by linestyle and marker as well as hue, so
+    the comparison survives a greyscale print — which is the medium a chart in a
+    README is most often read in.
+    """
+    out_path = Path(out_path)
+
+    rolling = ratio_rows.sort_values("window_ratio")
+    kalman = kalman_rows.sort_values("memory_ratio")
+
+    fig, ax = plt.subplots(figsize=(11.0, 5.4), layout="constrained")
+
+    # The danger zone: memory shorter than ~5 half-lives. Shaded rather than
+    # merely lined, because the claim is about a region, not a threshold value.
+    ax.axvspan(0, min_ratio, color=COLOR_DRAWDOWN, alpha=0.07, zorder=0)
+    ax.axvline(min_ratio, color=COLOR_DRAWDOWN, linewidth=1.0, linestyle=":", zorder=1)
+    ax.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.9, zorder=1)
+
+    ax.plot(
+        rolling["window_ratio"],
+        rolling["sharpe"],
+        color=COLOR_DRAWDOWN,
+        linewidth=1.9,
+        linestyle="-",
+        marker="o",
+        markersize=6,
+        zorder=4,
+    )
+    ax.plot(
+        kalman["memory_ratio"],
+        kalman["sharpe_ratio"],
+        color=COLOR_EQUITY,
+        linewidth=1.7,
+        linestyle="--",
+        marker="s",
+        markersize=6,
+        markerfacecolor="white",
+        markeredgewidth=1.4,
+        zorder=4,
+    )
+
+    # Label the series on the curves themselves. A legend would put the two
+    # names in a corner and force the reader to map colours back to lines.
+    # Both labels are anchored inside the axes and right-aligned at their
+    # curve's endpoint, so neither can run off the right edge however far the
+    # sweep extends.
+    r_last = rolling.iloc[-1]
+    ax.annotate(
+        "rolling OLS\nhard cutoff",
+        xy=(float(r_last["window_ratio"]), float(r_last["sharpe"])),
+        xytext=(-10, 6),
+        textcoords="offset points",
+        ha="right",
+        va="bottom",
+        fontsize=9.5,
+        fontweight="600",
+        color=COLOR_DRAWDOWN,
+    )
+    # The two curves converge at the right-hand end and the region between them
+    # is narrow throughout, so the Kalman label is parked in the genuinely empty
+    # lower-middle of the plot and tied to its curve with a leader line.
+    k_first = kalman.iloc[0]
+    ax.annotate(
+        "Kalman filter\nexponential decay, no window",
+        xy=(float(k_first["memory_ratio"]), float(k_first["sharpe_ratio"])),
+        xytext=(0.30, 0.20),
+        textcoords="axes fraction",
+        ha="left",
+        va="center",
+        fontsize=9.5,
+        fontweight="600",
+        color=COLOR_EQUITY,
+        arrowprops={
+            "arrowstyle": "-",
+            "color": COLOR_EQUITY,
+            "linewidth": 0.9,
+            "alpha": 0.7,
+        },
+    )
+
+    # The quantitative core: how far each estimator falls across the sweep.
+    r_lo, r_hi = float(rolling["sharpe"].iloc[0]), float(rolling["sharpe"].max())
+    k_lo, k_hi = float(kalman["sharpe_ratio"].iloc[0]), float(
+        kalman["sharpe_ratio"].max()
+    )
+    ax.annotate(
+        f"rolling OLS falls {r_hi:+.2f} → {r_lo:+.2f}\n"
+        f"Kalman falls {k_hi:+.2f} → {k_lo:+.2f}\n"
+        "the discontinuity costs the difference",
+        xy=(0.985, 0.06),
+        xycoords="axes fraction",
+        ha="right",
+        va="bottom",
+        fontsize=8.6,
+        color=COLOR_NEUTRAL,
+    )
+    ax.annotate(
+        f"memory < {min_ratio:.0f} × half-life:\nthe trailing location estimate is\n"
+        "contaminated by the deviation\nit is trying to measure",
+        xy=(0.03, 0.955),
+        xycoords="axes fraction",
+        ha="left",
+        va="top",
+        fontsize=8.6,
+        color=COLOR_DRAWDOWN,
+    )
+
+    ax.set_xlabel("estimator memory ÷ spread half-life")
+    ax.set_ylabel("Sharpe ratio")
+    # A little headroom on the right so the on-curve labels have somewhere to
+    # sit without being clipped by the axes edge.
+    x_max = max(
+        float(rolling["window_ratio"].max()), float(kalman["memory_ratio"].max())
+    )
+    ax.set_xlim(0, x_max * 1.06)
+    ax.annotate(
+        "both degrade as memory approaches the half-life — the windowless "
+        "filter does not escape it",
+        xy=(0.0, 1.015),
+        xycoords="axes fraction",
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color=COLOR_NEUTRAL,
+    )
+    ax.set_title(
+        "One law, two estimators: it is the memory, not the window",
+        loc="left",
+        fontsize=12.5,
+        fontweight="600",
+        pad=26,
+    )
+    _style_axes(ax)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def plot_leakage_signature(calibration: pd.DataFrame, out_path: str | Path) -> Path:
+    """Plot the fingerprint of each leak type as a practitioner's lookup.
+
+    :func:`plot_leakage_calibration` answers "what does a dose of leakage do to
+    Sharpe?". This chart answers the question a practitioner actually has, which
+    runs the other way: *my backtest looks like this — which bug do I have?*
+
+    That inversion drives the layout. Three rows, one per observable a reader
+    can read off their own backtest report — Sharpe, win rate, and trade count —
+    each plotted against the leak dose for both leak types on a shared row. The
+    diagnostic content is in the **pattern of signs across the three rows**, not
+    in any single curve:
+
+    - **Timing shift**: Sharpe down, win rate down, trade count flat. The rule
+      still fires the same number of times; it just fires early and holds the
+      position while the spread travels *into* the extreme.
+    - **Outcome filter**: Sharpe up, win rate up, trade count **down**. That
+      third sign is the tell, and it is the one a reader would not think to
+      check — the cheat declines trades rather than improving them.
+
+    Dose is normalised to 0–100% of each sweep's own range so the two leak types
+    share an x-axis despite being measured in different units (bars versus
+    percent of losers skipped). The absolute doses are annotated on the top row
+    so nothing is hidden by the normalisation.
+    """
+    out_path = Path(out_path)
+
+    shift = calibration[calibration["leak_type"] == "timing_shift"].sort_values("dose")
+    filt = calibration[calibration["leak_type"] == "outcome_filter"].sort_values("dose")
+
+    def normalised(frame: pd.DataFrame) -> np.ndarray:
+        dose = frame["dose"].to_numpy(dtype=float)
+        top = dose.max()
+        return dose / top * 100.0 if top > 0 else dose
+
+    x_shift = normalised(shift)
+    x_filt = normalised(filt)
+
+    rows = (
+        ("sharpe_ratio", "Sharpe ratio", 1.0),
+        ("win_rate", "Win rate (%)", 100.0),
+        ("n_trades", "Trade count", 1.0),
+    )
+
+    fig, axes = plt.subplots(
+        3, 1, figsize=(11.0, 8.2), sharex=True, layout="constrained"
+    )
+
+    for ax, (column, ylabel, scale) in zip(axes, rows):
+        ax.plot(
+            x_shift,
+            shift[column].to_numpy(dtype=float) * scale,
+            color=COLOR_DRAWDOWN,
+            linewidth=1.8,
+            linestyle="-",
+            marker="o",
+            markersize=4.5,
+            zorder=3,
+        )
+        ax.plot(
+            x_filt,
+            filt[column].to_numpy(dtype=float) * scale,
+            color=COLOR_ENTRY,
+            linewidth=1.8,
+            linestyle="--",
+            marker="s",
+            markersize=4.5,
+            markerfacecolor="white",
+            markeredgewidth=1.3,
+            zorder=3,
+        )
+        ax.set_ylabel(ylabel)
+        _style_axes(ax)
+
+        # Direction-of-travel summary in a clear margin to the right of the
+        # data. These, not the curves, are what a reader matches their own
+        # backtest against — so they get reserved space rather than being laid
+        # over a line, where a curve ending high would obscure them.
+        ax.set_xlim(-3.0, 100.0 + 34.0)
+        ax.axvline(103.0, color=COLOR_BAND, linewidth=0.9, zorder=1)
+        # Ticks stop at the data. Letting them run into the summary margin
+        # would imply doses beyond 100% of the sweep, which do not exist.
+        ax.set_xticks([0, 20, 40, 60, 80, 100])
+
+        shift_delta = float(shift[column].iloc[-1] - shift[column].iloc[0])
+        filt_delta = float(filt[column].iloc[-1] - filt[column].iloc[0])
+        for delta, colour, frac in (
+            (shift_delta, COLOR_DRAWDOWN, 0.72),
+            (filt_delta, COLOR_ENTRY, 0.34),
+        ):
+            if abs(delta) < 1e-9:
+                glyph, label_colour = "→ flat", COLOR_NEUTRAL
+            elif delta > 0:
+                glyph, label_colour = "▲ up", colour
+            else:
+                glyph, label_colour = "▼ down", colour
+            ax.annotate(
+                glyph,
+                xy=(112.0, frac),
+                xycoords=ax.get_xaxis_transform(),
+                ha="left",
+                va="center",
+                fontsize=9.5,
+                fontweight="600",
+                color=label_colour,
+            )
+
+    axes[0].annotate(
+        "two leaks, opposite directions — and the trade count is what tells "
+        "them apart",
+        xy=(0.0, 1.03),
+        xycoords="axes fraction",
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color=COLOR_NEUTRAL,
+    )
+    axes[0].set_title(
+        "The diagnostic signature: read your own backtest off these three rows",
+        loc="left",
+        fontsize=12.5,
+        fontweight="600",
+        pad=28,
+    )
+
+    # Name the two series on the top panel, placed in the open region each
+    # curve leaves behind: the timing-shift curve dives, so its label goes high
+    # on the left; the outcome-filter curve stays flat and high, so its label
+    # goes just beneath it.
+    axes[0].annotate(
+        f"timing shift  (0 → {int(shift['dose'].max())} bars)",
+        xy=(0.30, 0.50),
+        xycoords="axes fraction",
+        ha="left",
+        va="center",
+        fontsize=9.5,
+        fontweight="600",
+        color=COLOR_DRAWDOWN,
+    )
+    axes[0].annotate(
+        f"outcome filter  (0 → {filt['dose'].max() * 100:.0f}% of losers skipped)",
+        xy=(0.30, 0.80),
+        xycoords="axes fraction",
+        ha="left",
+        va="center",
+        fontsize=9.5,
+        fontweight="600",
+        color=COLOR_ENTRY,
+    )
+    # Header for the summary margin, so the arrow glyphs are self-explaining.
+    axes[0].annotate(
+        "direction\nof travel",
+        xy=(112.0, 1.04),
+        xycoords=axes[0].get_xaxis_transform(),
+        ha="left",
+        va="bottom",
+        fontsize=8.2,
+        color=COLOR_NEUTRAL,
+    )
+
+    # The three-part fingerprint, stated explicitly. This is the payload of the
+    # whole chart: a reader should be able to leave with these two rules.
+    n_filt_lo = int(filt["n_trades"].iloc[0])
+    n_filt_hi = int(filt["n_trades"].iloc[-1])
+    wr_lo = float(filt["win_rate"].iloc[0]) * 100.0
+    wr_hi = float(filt["win_rate"].iloc[-1]) * 100.0
+    axes[2].annotate(
+        f"OUTCOME FILTERING — the three-part fingerprint:\n"
+        f"Sharpe ▲, win rate ▲ ({wr_lo:.0f}% → {wr_hi:.0f}%), "
+        f"trade count ▼ ({n_filt_lo} → {n_filt_hi}).\n"
+        "Fewer trades with a higher win rate means the cheat is *declining* "
+        "trades,\nnot improving them. Check trade count against signal count.",
+        xy=(0.015, 0.30),
+        xycoords="axes fraction",
+        ha="left",
+        va="center",
+        fontsize=8.6,
+        color=COLOR_ENTRY,
+        bbox={
+            "boxstyle": "round,pad=0.40",
+            "facecolor": "white",
+            "edgecolor": COLOR_ENTRY,
+            "linewidth": 0.9,
+            "alpha": 0.95,
+        },
+        zorder=6,
+    )
+    axes[1].annotate(
+        "TIMING SHIFT: Sharpe ▼, win rate ▼, trade count flat —\n"
+        "same number of trades, all of them worse.",
+        xy=(0.015, 0.22),
+        xycoords="axes fraction",
+        ha="left",
+        va="center",
+        fontsize=8.6,
+        color=COLOR_DRAWDOWN,
+        bbox={
+            "boxstyle": "round,pad=0.40",
+            "facecolor": "white",
+            "edgecolor": COLOR_DRAWDOWN,
+            "linewidth": 0.9,
+            "alpha": 0.95,
+        },
+        zorder=6,
+    )
+
+    axes[2].set_xlabel("leak dose (% of each sweep's full range)")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
 def plot_window_ratio_finding(
     half_life_rows: pd.DataFrame,
     ratio_rows: pd.DataFrame,
