@@ -372,13 +372,13 @@ needs. Correlation says nothing about the order of integration of the residual.
 
 ### This is not hypothetical — it appears in the real data
 
-| Pair | Level corr. | Return corr. | Engle-Granger *p* | Johansen | Cointegrated? |
+| Pair | Level corr. | Return corr. | Engle-Granger *p* | Johansen trace (crit. 15.49) | Cointegrated? |
 | --- | ---: | ---: | ---: | :---: | :--- |
-| **KO/PEP** | **0.978** | 0.743 | 0.107 | 13.91 < 15.49 | **No** |
-| HD/LOW | 0.979 | 0.820 | 0.155 | 11.70 < 15.49 | No |
-| GS/MS | 0.973 | 0.865 | 0.464 | 4.94 < 15.49 | No |
-| XOM/CVX | 0.859 | 0.832 | 0.780 | 5.68 < 15.49 | No |
-| MA/V | 0.998 | 0.893 | **0.0008** | **24.77 > 15.49** | **Yes** |
+| **KO/PEP** | **0.978** | 0.743 | 0.107 | 13.91 | **No** |
+| HD/LOW | 0.979 | 0.820 | 0.155 | 11.70 | No |
+| GS/MS | 0.973 | 0.865 | 0.464 | 4.94 | No |
+| XOM/CVX | 0.859 | 0.832 | 0.780 | 5.68 | No |
+| MA/V | 0.998 | 0.893 | **0.0008** | **24.77** | **Yes** |
 
 **KO/PEP — the pair every pairs-trading tutorial uses — has 0.978 level
 correlation and fails both cointegration tests.** A correlation screen would
@@ -403,19 +403,14 @@ Ground truth recovered from data the engine never saw: true β = 1.200 →
 estimated **1.245**; true half-life = 15.0 → estimated **14.9 bars**.
 Engle-Granger *p* < 1e-6, ADF *p* < 1e-6, Johansen 64.76 ≫ 15.49.
 
+Beyond the headline figures (Sharpe +0.7395, CI [+0.178, +1.323], max drawdown
+−1.26% over 52 bars, 54 trades, *t* = +2.79 with *p* = 0.0074):
+
 | Metric | Value |
 | --- | ---: |
-| **Sharpe ratio** (annualized, rf = 4%) | **+0.7395** |
-| 95% bootstrap CI | [+0.178, +1.323] |
+| Total return | +64.59% — of which trading **+$13,608**, interest **+$50,981** |
+| Annualized return / volatility | +5.11% / 1.45% |
 | Sharpe per bar (un-annualized) | +0.046583 |
-| **Maximum drawdown** | **−1.26%** (52 bars to recovery) |
-| **Number of trades** | **54** |
-| Per-trade *t*-statistic | **+2.79** (*p* = 0.0074) |
-| Total return | +64.59% |
-|   ├─ trading PnL | +$13,608 |
-|   └─ interest on idle cash | +$50,981 |
-| Annualized return | +5.11% |
-| Annualized volatility | 1.45% |
 | Calmar ratio | 4.06 |
 | Win rate | 72.2% (39 W / 15 L) |
 | Average win / loss | $555.68 / −$537.54 |
@@ -428,8 +423,7 @@ Engle-Granger *p* < 1e-6, ADF *p* < 1e-6, Johansen 64.76 ≫ 15.49.
 
 ![Equity curve](reports/coint_medium/equity_curve.png)
 
-That equity curve is honest but visually flattering, and worth reading
-carefully. Its smoothness is mostly **interest**, not skill. Decomposed:
+Its smoothness is mostly **interest**, not skill. Decomposed:
 
 ![Equity decomposition](reports/coint_medium/equity_decomposition.png)
 
@@ -447,20 +441,14 @@ signature of next-bar execution.
 ### Negative control — independent random walks
 
 **A good result here would mean the backtester is broken.** There is no
-relationship to trade.
+relationship to trade — yet the strategy trades it 53 times and ends +$9,185
+ahead, which as a point estimate looks like a modest edge. Its *t*-statistic is
++0.86 (*p* = 0.393): indistinguishable from zero. Cointegration is correctly
+rejected (EG *p* = 0.673, Johansen 10.45 < 15.49) and the estimated half-life of
+286 bars is untradeable. The drawdown is 4.4× worse than the primary dataset's.
 
-| Metric | Value | Reading |
-| --- | ---: | :--- |
-| Sharpe | +0.26 | 95% CI [−0.24, +0.76] — brackets zero |
-| Trading PnL | +$9,185 | Looks like an edge as a point estimate |
-| **Per-trade *t*** | **+0.86** | ***p* = 0.393 — consistent with zero** |
-| Max drawdown | −5.56% | 4.4× worse than the primary, over 271 bars |
-| Cointegration | EG *p* = 0.673, Johansen 10.45 < 15.49 | Correctly rejected |
-| Half-life | 286 bars | Untradeable (~14 months) |
-
-The strategy trades this data 53 times and ends up ahead by an amount
-indistinguishable from luck. That is the correct outcome, and the pipeline
-reports it prominently rather than burying it.
+That is the correct outcome, and the pipeline reports it prominently rather than
+burying it.
 
 ### Real market data (2015-01-02 → 2024-12-30, 2,515 bars each)
 
