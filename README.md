@@ -30,6 +30,9 @@ Also here: [`CREDITS.md`](CREDITS.md) — prior art, what was adopted, and what 
 rejected on licence or correctness grounds · [`docs/SCHEMA.md`](docs/SCHEMA.md) —
 the CSV contract both languages validate against.
 
+MIT licensed. Research artifact, not investment advice — its own conclusion is
+that the strategy shows no significant edge on real data.
+
 ---
 
 ## Headline results

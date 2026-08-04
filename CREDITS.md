@@ -1,5 +1,10 @@
 # Credits and prior art
 
+This repository is MIT licensed (see [`LICENSE`](LICENSE)) — chosen deliberately,
+given that the section below declines to use another project specifically
+because it carries no licence. It would be incoherent to make that argument and
+then leave this repository in the same state.
+
 Everything in this repository is original code. Nothing was copied. This file
 records the external work that *informed* it, what was taken (ideas, not code),
 and — where relevant — what was deliberately rejected and why.
