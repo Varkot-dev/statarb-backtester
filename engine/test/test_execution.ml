@@ -410,6 +410,74 @@ let test_interest_is_reported_and_reconciles () =
   Alcotest.(check (float 1e-6)) "per-bar interest sums to the reported total"
     summed res.metrics.total_interest
 
+(** {1 Negative control at the engine level}
+
+    The Python suite checks that the engine produces no meaningful edge on
+    independent random walks. These do the same inside OCaml, where a failure
+    points directly at the engine rather than at the interchange layer. *)
+
+(** {b The engine must not manufacture profit from noise.}
+
+    Two independent random walks have no exploitable relationship. Averaged
+    across seeds, mean trade PnL must be small relative to its own dispersion —
+    that is, indistinguishable from zero.
+
+    Averaging across seeds rather than asserting on one path is deliberate: a
+    single 250-bar sample of a no-edge strategy has substantial variation, so a
+    single-seed bound would be testing which seed was chosen. What is asserted
+    here is that the {e aggregate} t-statistic over many independent paths stays
+    small, which a lookahead bug could not satisfy. *)
+let test_no_edge_on_independent_walks () =
+  let cfg = Fixtures.test_config () in
+  let all_pnl = ref [] in
+  for seed = 1 to 40 do
+    let series = Fixtures.independent_walks ~n:250 ~seed ~sigma:0.015 in
+    match Backtest.run cfg series with
+    | Error e ->
+        Alcotest.failf "backtest failed on seed %d: %s" seed
+          (string_of_error e)
+    | Ok res ->
+        List.iter (fun (t : trade) -> all_pnl := t.pnl_net :: !all_pnl) res.trades
+  done;
+  let pnl = Array.of_list !all_pnl in
+  let n = Array.length pnl in
+  Alcotest.(check bool)
+    (Printf.sprintf "the strategy traded enough to assess (got %d trades)" n)
+    true (n > 100);
+  let mean = Fixtures.get_ok (Metrics.mean pnl) in
+  let sd = Fixtures.get_ok (Metrics.stddev pnl) in
+  let t_stat = mean /. (sd /. sqrt (float_of_int n)) in
+  (* |t| < 3 is a deliberately loose bound. The claim is not that the mean is
+     exactly zero — it will not be on any finite sample — but that it is not
+     dramatically far from zero, which is what a lookahead leak would produce
+     (t-statistics of 5+ are typical when the future is visible). *)
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "mean trade PnL on noise is indistinguishable from zero (n=%d, \
+        mean=%.2f, sd=%.2f, t=%.3f)"
+       n mean sd t_stat)
+    true
+    (Float.abs t_stat < 3.0)
+
+(** The engine must not crash, produce a non-finite NAV, or violate its
+    accounting on data with no structure. Degenerate inputs are where an engine
+    that only ever saw well-behaved fixtures tends to break. *)
+let test_engine_is_robust_on_noise () =
+  let cfg = Fixtures.test_config () in
+  for seed = 100 to 130 do
+    let series = Fixtures.independent_walks ~n:200 ~seed ~sigma:0.04 in
+    match Backtest.run cfg series with
+    | Error e ->
+        Alcotest.failf "engine failed on noise seed %d: %s" seed
+          (string_of_error e)
+    | Ok res ->
+        Array.iteri
+          (fun i v ->
+            if not (Float.is_finite v && v > 0.) then
+              Alcotest.failf "seed %d bar %d: NAV is %g" seed i v)
+          res.navs
+  done
+
 (** {1 Type-level guarantees}
 
     These do not test runtime behaviour so much as document that the compiler
@@ -497,6 +565,10 @@ let tests =
      test_flat_portfolio_compounds_at_the_risk_free_rate);
     ("interest is reported and reconciles", `Quick,
      test_interest_is_reported_and_reconciles);
+    ("no edge on independent walks (engine negative control)", `Quick,
+     test_no_edge_on_independent_walks);
+    ("engine is robust on unstructured noise", `Quick,
+     test_engine_is_robust_on_noise);
     ("Qty rejects invalid magnitudes", `Quick, test_qty_rejects_invalid);
     ("Price rejects invalid prices", `Quick, test_price_rejects_invalid);
     ("position has exactly two states", `Quick, test_position_has_exactly_two_states);

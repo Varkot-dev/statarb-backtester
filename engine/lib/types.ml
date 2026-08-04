@@ -54,7 +54,6 @@ let string_of_error = function
     the build to a single opam package (dune) plus the test frameworks. *)
 module R = struct
   let ( let* ) = Result.bind
-  let ( >>| ) r f = Result.map f r
 
   (** Sequence a list of results into a result of list, short-circuiting on the
       first error. *)
@@ -83,10 +82,6 @@ module Qty : sig
   (** [of_float x] is [Ok] iff [x] is finite and strictly positive. *)
 
   val to_float : t -> float
-  val add : t -> t -> t
-  val scale : t -> float -> (t, error) result
-  val compare : t -> t -> int
-  val pp : Format.formatter -> t -> unit
 end = struct
   type t = float
 
@@ -94,14 +89,6 @@ end = struct
     if Float.is_finite x && x > 0. then Ok x else Error (Invalid_quantity x)
 
   let to_float x = x
-  let add a b = a +. b
-
-  let scale q k =
-    let x = q *. k in
-    if Float.is_finite x && x > 0. then Ok x else Error (Invalid_quantity x)
-
-  let compare = Float.compare
-  let pp fmt x = Format.fprintf fmt "%.6f" x
 end
 
 (* ------------------------------------------------------------------ *)
@@ -118,7 +105,6 @@ module Price : sig
 
   val of_float : float -> (t, error) result
   val to_float : t -> float
-  val pp : Format.formatter -> t -> unit
 end = struct
   type t = float
 
@@ -126,7 +112,6 @@ end = struct
     if Float.is_finite x && x > 0. then Ok x else Error (Invalid_price x)
 
   let to_float x = x
-  let pp fmt x = Format.fprintf fmt "%.6f" x
 end
 
 (* ------------------------------------------------------------------ *)

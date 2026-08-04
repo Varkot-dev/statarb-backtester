@@ -460,7 +460,7 @@ constraints, or taxes.
 
 ```bash
 make deps      # opam install dune alcotest qcheck; pip install -r requirements.txt
-make test      # 136 OCaml + 87 Python = 223 tests
+make test      # 138 OCaml + 87 Python = 225 tests
 make backtest  # regenerates every figure in this README from fixed seeds
 ```
 
@@ -501,9 +501,9 @@ Two honest qualifications, neither of which is a claim made on the resume:
 
 ## Testing
 
-**223 tests.** `make test`
+**225 tests.** `make test`
 
-### OCaml — 136 tests ([`engine/test/`](engine/test/))
+### OCaml — 138 tests ([`engine/test/`](engine/test/))
 
 | Suite | Tests | Covers |
 | --- | ---: | --- |
@@ -512,7 +512,7 @@ Two honest qualifications, neither of which is a claim made on the resume:
 | `ols` | 10 | Exact-fit recovery, ground-truth β, degenerate refusal |
 | `metrics` | 20 | Sharpe & max-drawdown against hand-computed fixtures |
 | `signal` | 14 | Threshold logic, exit precedence, config validation |
-| `execution` | 29 | Sizing, costs, **NAV reconciliation every bar**, interest accrual |
+| `execution` | 31 | Sizing, costs, **NAV reconciliation every bar**, interest accrual, engine-level negative control |
 | `csv_io` | 14 | Round-trips and parser strictness |
 | **`lookahead`** | **9** | **Truncation invariance, perturbation, next-bar, negative control** |
 | `properties` | 20 | QCheck invariants (see below) |

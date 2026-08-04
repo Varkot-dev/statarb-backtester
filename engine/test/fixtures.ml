@@ -88,17 +88,6 @@ let independent_walks ~(n : int) ~(seed : int) ~(sigma : float) : series =
       lb := !lb +. (sigma *. Lcg.next_gaussian g);
       bar_exn ~date:(date_of_index i) ~a:(exp !la) ~b:(exp !lb))
 
-(** A deterministic pair with a sinusoidal spread. Because the spread is a
-    known analytic function, the z-score crossings — and hence the exact bars
-    on which the engine should trade — can be reasoned about by hand. *)
-let sinusoidal ~(n : int) ~(period : float) ~(amplitude : float) : series =
-  Array.init n (fun i ->
-      let x = float_of_int i in
-      let s = amplitude *. sin (2. *. Float.pi *. x /. period) in
-      let lb = log 50. in
-      let la = log 100. +. s in
-      bar_exn ~date:(date_of_index i) ~a:(exp la) ~b:(exp lb))
-
 (** A test config with short windows, so tests run over small series. *)
 let test_config ?(hedge_window = 20) ?(zscore_window = 20)
     ?(entry_threshold = 2.0) ?(exit_threshold = 0.5)
@@ -123,12 +112,3 @@ let get_ok = function
   | Ok x -> x
   | Error e -> Alcotest.failf "expected Ok, got Error: %s" (string_of_error e)
 
-let get_error = function
-  | Ok _ -> Alcotest.fail "expected Error, got Ok"
-  | Error e -> e
-
-(** Alcotest testable for floats with an explicit tolerance. Every float
-    comparison in this suite states its tolerance rather than relying on a
-    default, because the appropriate tolerance differs by two orders of
-    magnitude between (say) a z-score and a dollar NAV. *)
-let float_eq ~(eps : float) = Alcotest.float eps
