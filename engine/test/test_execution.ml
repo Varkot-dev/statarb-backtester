@@ -410,6 +410,103 @@ let test_interest_is_reported_and_reconciles () =
   Alcotest.(check (float 1e-6)) "per-bar interest sums to the reported total"
     summed res.metrics.total_interest
 
+(** {b The end-of-data liquidation must reach every reported view.}
+
+    This is the test that was missing, and its absence let a real bug ship in
+    published output. Every existing reconciliation test happened to use a
+    fixture that ended flat, so no test asserted anything when
+    [n_end_of_data > 0]. The liquidation patched the NAV series but not the
+    audit trail, and [make test] stayed green while bars.csv and metrics.csv
+    disagreed by the exit cost.
+
+    The construction below forces the failing case: an entry threshold low
+    enough and a stop wide enough that the engine is almost certainly holding a
+    position when the data runs out. The test asserts it is, so it cannot
+    silently degrade into the flat case it exists to avoid. *)
+let test_end_of_data_liquidation_reaches_every_view () =
+  let cfg =
+    Fixtures.test_config ~entry_threshold:0.5 ~exit_threshold:0.05
+      ~stop_loss_threshold:20. ~max_holding_bars:500 ~commission_bps:5.
+      ~slippage_bps:5. ()
+  in
+  let series =
+    Fixtures.cointegrated ~n:300 ~seed:4242 ~beta:1.1 ~half_life:80.
+      ~sigma_spread:0.04 ~sigma_common:0.01
+  in
+  let res = Fixtures.get_ok (Backtest.run cfg series) in
+
+  (* Guard against the test quietly becoming vacuous. *)
+  Alcotest.(check int)
+    "the sample ends with a forced liquidation" 1 res.metrics.n_end_of_data;
+
+  let bars = Array.of_list res.bars in
+  let last = bars.(Array.length bars - 1) in
+
+  (* 1. The audit trail must agree with the metrics on final NAV. *)
+  Alcotest.(check (float 1e-9))
+    "bars.csv final NAV equals metrics final NAV" res.metrics.final_nav
+    last.r_nav;
+  Alcotest.(check (float 1e-9))
+    "and equals the last element of the NAV series"
+    res.navs.(Array.length res.navs - 1)
+    last.r_nav;
+
+  (* 2. Costs must reconcile across the two views. *)
+  let summed = Array.fold_left (fun a r -> a +. r.r_costs_this_bar) 0. bars in
+  Alcotest.(check (float 1e-9))
+    "sum of per-bar costs equals total costs" res.metrics.total_costs summed;
+
+  (* 3. The final row must not claim a position the book no longer holds. *)
+  Alcotest.(check string) "final bar is flat" "flat" last.r_position;
+  Alcotest.(check (float 0.)) "final bar has no leg A" 0. last.r_qty_a;
+  Alcotest.(check (float 0.)) "final bar has no leg B" 0. last.r_qty_b;
+  Alcotest.(check bool)
+    "final bar records the liquidation event" true
+    (String.length last.r_trade_event > 0);
+
+  (* 4. NAV = cash + position value still holds on the patched row. *)
+  Alcotest.(check (float 1e-9))
+    "NAV identity holds on the final row"
+    (last.r_cash +. last.r_position_value)
+    last.r_nav;
+
+  (* 5. Exposure cannot exceed the bars available to trade. *)
+  Alcotest.(check bool)
+    (Printf.sprintf "exposure_frac is a fraction (got %.4f)"
+       res.metrics.exposure_frac)
+    true
+    (res.metrics.exposure_frac >= 0. && res.metrics.exposure_frac <= 1.)
+
+(** The per-bar NAV identity must hold at {e every} bar including the last,
+    which is where the liquidation lands. The existing reconciliation test
+    stopped short of this case because its fixture ended flat. *)
+let test_nav_identity_holds_through_liquidation () =
+  let cfg =
+    Fixtures.test_config ~entry_threshold:0.5 ~exit_threshold:0.05
+      ~stop_loss_threshold:20. ~max_holding_bars:500 ~commission_bps:5.
+      ~slippage_bps:5. ()
+  in
+  let series =
+    Fixtures.cointegrated ~n:300 ~seed:4242 ~beta:1.1 ~half_life:80.
+      ~sigma_spread:0.04 ~sigma_common:0.01
+  in
+  let res = Fixtures.get_ok (Backtest.run cfg series) in
+  Alcotest.(check int) "liquidation occurred" 1 res.metrics.n_end_of_data;
+  let bars = Array.of_list res.bars in
+  for i = 1 to Array.length bars - 1 do
+    let prev = bars.(i - 1) and cur = bars.(i) in
+    let mtm =
+      (prev.r_qty_a *. (cur.r_price_a -. prev.r_price_a))
+      +. (prev.r_qty_b *. (cur.r_price_b -. prev.r_price_b))
+    in
+    let expected =
+      prev.r_nav +. mtm +. cur.r_interest_this_bar -. cur.r_costs_this_bar
+    in
+    Alcotest.(check (float 1e-6))
+      (Printf.sprintf "NAV identity at bar %d of %d" i (Array.length bars - 1))
+      expected cur.r_nav
+  done
+
 (** {1 Negative control at the engine level}
 
     The Python suite checks that the engine produces no meaningful edge on
@@ -565,6 +662,10 @@ let tests =
      test_flat_portfolio_compounds_at_the_risk_free_rate);
     ("interest is reported and reconciles", `Quick,
      test_interest_is_reported_and_reconciles);
+    ("end-of-data liquidation reaches every view", `Quick,
+     test_end_of_data_liquidation_reaches_every_view);
+    ("NAV identity holds through liquidation", `Quick,
+     test_nav_identity_holds_through_liquidation);
     ("no edge on independent walks (engine negative control)", `Quick,
      test_no_edge_on_independent_walks);
     ("engine is robust on unstructured noise", `Quick,

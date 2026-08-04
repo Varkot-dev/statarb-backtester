@@ -266,31 +266,70 @@ let run (cfg : Config.t) (series : series) : (backtest_result, error) result =
         let final = series.(n - 1) in
         let fpa = Price.to_float final.price_a in
         let fpb = Price.to_float final.price_b in
-        let* portfolio_final =
+        (* The liquidation must update EVERY reported view, not just NAV.
+
+           A previous version patched [navs] alone and left [records],
+           [turnover_notional], and [bars_with_position] untouched. The result
+           shipped in published output: the final bar of bars.csv reported an
+           open position with zero cost while metrics.csv reported it
+           liquidated, the two disagreed on final NAV by the exit cost, and
+           sum(bars.costs_this_bar) no longer equalled metrics.total_costs.
+
+           That is the worst possible bug for this project, because the audit
+           trail is precisely what the README asks readers to trust INSTEAD of
+           the engine's own summary. Every view is now updated together. *)
+        let* portfolio_final, liquidation =
           match !portfolio.position with
-          | Flat -> Ok !portfolio
-          | Open _ ->
+          | Flat -> Ok (!portfolio, None)
+          | Open p ->
+              let traded = Execution.gross_notional p ~price_a:fpa ~price_b:fpb in
               let* fill =
                 Execution.apply cfg ~intent:(Signal.Exit End_of_data)
                   ~position:!portfolio.position ~fill_price_a:fpa
                   ~fill_price_b:fpb ~fill_index:(n - 1) ~fill_date:final.date
                   ~beta:!pending_beta ~z:!pending_z ~entry_dates
               in
-              (* The forced close happens at the last bar's price, which is
-                 already marked, so NAV changes only by the exit costs. Those
-                 costs are charged and reflected in the final NAV below. *)
-              Ok (Portfolio.apply_fill !portfolio fill)
+              turnover_notional := !turnover_notional +. traded;
+              (* The bar was counted as holding a position while the loop ran;
+                 it no longer does, so the exposure numerator is corrected. *)
+              if n - 1 >= warmup && !bars_with_position > 0 then
+                decr bars_with_position;
+              Ok (Portfolio.apply_fill !portfolio fill, Some fill)
         in
         let final_nav =
           Portfolio.nav portfolio_final ~price_a:fpa ~price_b:fpb
         in
-        (* Replace the last NAV with the post-liquidation value. *)
         let navs_arr =
           let a = Array.of_list (List.rev !navs) in
           if Array.length a > 0 then a.(Array.length a - 1) <- final_nav;
           a
         in
-        let recs = List.rev !records in
+        (* Rewrite the final audit row to match the liquidated book. Without
+           this the row contradicts both metrics.csv and trades.csv. *)
+        let recs =
+          match (List.rev !records, liquidation) with
+          | [], _ | _, None -> List.rev !records
+          | rows, Some fill ->
+              let last = List.nth rows (List.length rows - 1) in
+              let patched =
+                {
+                  last with
+                  r_position = "flat";
+                  r_qty_a = 0.;
+                  r_qty_b = 0.;
+                  r_cash = portfolio_final.cash;
+                  r_position_value = 0.;
+                  r_nav = final_nav;
+                  r_costs_this_bar = last.r_costs_this_bar +. fill.cost;
+                  r_trade_event =
+                    (if last.r_trade_event = "" then fill.event
+                     else last.r_trade_event ^ ";" ^ fill.event);
+                }
+              in
+              List.mapi
+                (fun i r -> if i = List.length rows - 1 then patched else r)
+                rows
+        in
         let* metrics =
           Metrics.compute ~navs:navs_arr
             ~trades:(List.rev portfolio_final.trades)

@@ -186,6 +186,52 @@ def test_metrics_are_internally_consistent(cointegrated_csv, tmp_path):
 
 
 @requires_engine
+def test_bars_and_metrics_agree_when_the_sample_ends_open(tmp_path):
+    """The audit trail must match the metrics even under a forced liquidation.
+
+    This is the cross-language half of the test that was missing. Every prior
+    reconciliation test used a fixture that happened to end flat, so nothing
+    asserted anything when ``n_end_of_data > 0`` — and a real bug shipped in
+    published output: the final bar reported an open position with zero cost
+    while metrics.csv reported it liquidated, and the two disagreed on final NAV
+    and total costs by exactly the exit cost.
+
+    The configuration below is chosen so the engine is still holding a position
+    when the data runs out, and the test asserts that it is, so it cannot
+    quietly become the flat case it exists to cover.
+    """
+    from statarb.synth import CointegratedSpec, generate_cointegrated
+
+    spec = CointegratedSpec(
+        n_bars=300, beta=1.1, half_life=80.0, sigma_spread=0.04,
+        sigma_common=0.01,
+    )
+    prices = write_prices(generate_cointegrated(spec, seed=4242), tmp_path / "eod.csv")
+    out_dir = tmp_path / "eod_out"
+    run_backtest(
+        prices, out_dir, "--entry", "0.5", "--exit", "0.05", "--stop", "20",
+        "--max-hold", "500", "--commission-bps", "5", "--slippage-bps", "5",
+    )
+
+    bars = read_bars(out_dir / "bars.csv")
+    metrics = read_metrics(out_dir / "metrics.csv")
+
+    assert int(metrics["n_end_of_data"]) == 1, (
+        "fixture no longer ends with an open position; this test is vacuous"
+    )
+
+    last = bars.iloc[-1]
+    assert last["nav"] == pytest.approx(metrics["final_nav"], abs=1e-6)
+    assert bars["costs_this_bar"].sum() == pytest.approx(
+        metrics["total_costs"], abs=1e-6
+    )
+    assert last["position"] == "flat"
+    assert last["qty_a"] == 0.0 and last["qty_b"] == 0.0
+    assert "end_of_data" in last["trade_event"]
+    assert 0.0 <= metrics["exposure_frac"] <= 1.0
+
+
+@requires_engine
 def test_engine_is_deterministic(cointegrated_csv, tmp_path):
     """The same input produces byte-identical output.
 
