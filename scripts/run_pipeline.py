@@ -310,6 +310,23 @@ def main() -> int:
     )
     no_interest_metrics = sio.read_metrics(no_interest_dir / "metrics.csv")
 
+    # Leakage calibration: how much would a KNOWN dose of lookahead change the
+    # reported result? Produces the dose-response curves the README leads with.
+    log(f"'{primary.key}': leakage calibration")
+    calibration_csv = REPORTS_DIR / "leakage_calibration.csv"
+    result = subprocess.run(
+        [str(ENGINE_BINARY), "calibrate", "--prices",
+         str(RAW_DIR / f"{primary.key}.csv"), "--out", str(calibration_csv),
+         "--quiet"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"calibration failed:\n{result.stderr}")
+    calibration = pd.read_csv(calibration_csv)
+    report.plot_leakage_calibration(
+        calibration, REPORTS_DIR / "leakage_calibration.png"
+    )
+
     log(f"parameter sweep on '{primary.key}'")
     sweep_csv = REPORTS_DIR / "sweep.csv"
     run_sweep(RAW_DIR / f"{primary.key}.csv", sweep_csv, primary.key)
@@ -328,6 +345,11 @@ def main() -> int:
             "without_interest": no_interest_metrics,
         },
         "sweep_csv": str(sweep_csv.relative_to(REPO_ROOT)),
+        "leakage_calibration": {
+            "csv": str(calibration_csv.relative_to(REPO_ROOT)),
+            "chart": "reports/leakage_calibration.png",
+            "rows": calibration.to_dict(orient="records"),
+        },
         "real_data": real,
     }
     summary_path = REPORTS_DIR / "summary.json"
@@ -377,6 +399,20 @@ def main() -> int:
             f"Johansen {c['johansen_trace_stat']:.2f} vs crit {c['johansen_crit_95']:.2f}  "
             f"-> {'COINTEGRATED' if c['is_cointegrated'] else 'NOT cointegrated'}"
         )
+    print()
+    shift = calibration[calibration.leak_type == "timing_shift"]
+    filt = calibration[calibration.leak_type == "outcome_filter"]
+    print("Leakage calibration (primary dataset):")
+    print(
+        f"  timing shift   k=0 -> k={int(shift.dose.max())}: "
+        f"Sharpe {shift.iloc[0].sharpe_ratio:+.4f} -> {shift.iloc[-1].sharpe_ratio:+.4f}"
+        "  (an off-by-one DESTROYS a mean-reversion strategy)"
+    )
+    print(
+        f"  outcome filter 0% -> 100% of losers skipped: "
+        f"Sharpe {filt.iloc[0].sharpe_ratio:+.4f} -> {filt.iloc[-1].sharpe_ratio:+.4f}"
+        f", win rate {filt.iloc[0].win_rate:.3f} -> {filt.iloc[-1].win_rate:.3f}"
+    )
     print()
     print("Cash-interest convention (primary dataset):")
     print(

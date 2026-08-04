@@ -153,6 +153,46 @@ def main() -> int:
     else:
         print("note: real data unavailable in this run; skipping those checks")
 
+    # ------------------------------------------------------ leakage calibration
+    if "leakage_calibration" in summary:
+        rows = summary["leakage_calibration"]["rows"]
+        shift = [r for r in rows if r["leak_type"] == "timing_shift"]
+        filt = [r for r in rows if r["leak_type"] == "outcome_filter"]
+
+        c.contains(f"{shift[0]['sharpe_ratio']:+.2f}", "calibration: honest Sharpe (shift curve)")
+        c.contains(
+            f"{shift[6]['sharpe_ratio']:+.2f}".replace("-", "−"),
+            "calibration: timing-shift Sharpe at k=6",
+        )
+        c.contains(f"{filt[-1]['sharpe_ratio']:+.2f}", "calibration: fully-filtered Sharpe")
+        c.contains(
+            f"{shift[0]['win_rate'] * 100:.0f}%", "calibration: honest win rate"
+        )
+        c.contains(
+            f"{shift[6]['win_rate'] * 100:.0f}%", "calibration: shifted win rate"
+        )
+        c.contains(
+            f"{int(filt[0]['n_trades'])} → {int(filt[-1]['n_trades'])}",
+            "calibration: trade-count drop under filtering",
+        )
+        # The direction claims must match the measurements, not just the text.
+        c.check(
+            shift[6]["sharpe_ratio"] < shift[0]["sharpe_ratio"],
+            "README claims timing shift DEGRADES performance",
+        )
+        c.check(
+            filt[-1]["sharpe_ratio"] > filt[0]["sharpe_ratio"],
+            "README claims outcome filtering INFLATES Sharpe",
+        )
+        c.check(
+            filt[-1]["n_trades"] < filt[0]["n_trades"],
+            "README claims outcome filtering reduces the trade count",
+        )
+        c.check(
+            filt[-1]["win_rate"] > filt[0]["win_rate"],
+            "README claims outcome filtering raises the win rate",
+        )
+
     # ------------------------------------------------------------------ sweep
     sweep = pd.read_csv(REPO_ROOT / summary["sweep_csv"])
     c.contains(f"{len(sweep)} combinations", "sweep combination count")

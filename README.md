@@ -46,6 +46,66 @@ position only 24% of bars. Every result below decomposes the two.
 
 ---
 
+## Leakage calibration: what does cheating actually buy you?
+
+Every backtester claims no lookahead. The claim is rarely falsifiable, because a
+reader has no way to know what a *given amount* of leakage would even look like
+in the reported numbers. "Sharpe 4.0 seems high" is a smell, not a measurement.
+
+So this repo measures it. [`leakage.ml`](engine/lib/leakage.ml) injects a
+**known dose** of the exact bias the rest of the codebase prevents, and sweeps
+the dose to produce response curves:
+
+```bash
+statarb calibrate --prices data/raw/coint_medium.csv --out reports/leakage_calibration.csv
+```
+
+![Leakage calibration](reports/leakage_calibration.png)
+
+### The result contradicted the hypothesis
+
+I expected any lookahead to inflate Sharpe. **It depends entirely on which leak
+you have, and the two run in opposite directions.**
+
+| Leak | Cause in real code | Effect on Sharpe |
+| --- | --- | ---: |
+| **Timing shift** — signal at bar *t* belongs to *t+k* | off-by-one in a resample or join, `shift(-k)` | **+0.69 → −2.56** at k=6 |
+| **Outcome filter** — trades that will lose get skipped | `shift(-1)` on a feature, same-bar execution | **+0.74 → +1.15** at 100% |
+
+**Timing shift destroys a mean-reversion strategy.** The rule wants to enter *at*
+an extreme; foresight makes it enter early, so it carries the position while the
+spread travels *into* the extreme and only then collects the reversion. Win rate
+collapses from 69% to 4%.
+
+**Outcome filtering inflates it**, and leaves a three-part fingerprint: Sharpe up,
+win rate up (72% → 82%), and trade count *down*
+(54 → 49) — because the cheat declines trades rather than
+improving them.
+
+### Why this is a useful instrument, not a party trick
+
+- **It calibrates suspicion quantitatively.** A daily pairs backtest reporting a
+  high Sharpe *with* an unusually high win rate and fewer trades than its signal
+  count implies is showing the outcome-contamination signature.
+- **The direction diagnoses the bug.** A suddenly *negative* Sharpe points at
+  misalignment, not at a broken strategy. Different bugs, different signs.
+- **Dose zero is pinned to production bit-for-bit.**
+  `test_zero_peek_matches_the_honest_engine` asserts it, so the curve's origin
+  is the real backtest — and it doubles as an independent second implementation
+  of the causal z-score.
+- **Leaky code can't escape into production.** It takes a raw array, not a
+  {!Causal.view}; the production path only ever builds views. And
+  `test_leaky_signals_break_truncation_invariance` asserts a non-zero dose
+  *fails* the lookahead suite — so if this were ever wired in, CI would fail.
+
+Two bugs surfaced while building it, both caught by tests failing against my own
+assumptions: the leaky window was off by one bar versus production, and
+suppressing a single entry *delayed* the losing trade rather than avoiding it
+(skipping 100% of losers removed only 2 of 54 trades until whole episodes were
+suppressed).
+
+---
+
 ## The no-lookahead guarantee
 
 Lookahead bias is the failure that makes a backtest worthless. It is easy to
@@ -460,7 +520,7 @@ constraints, or taxes.
 
 ```bash
 make deps      # opam install dune alcotest qcheck; pip install -r requirements.txt
-make test      # 138 OCaml + 87 Python = 225 tests
+make test      # 148 OCaml + 87 Python = 235 tests
 make backtest  # regenerates every figure in this README from fixed seeds
 ```
 
@@ -501,9 +561,9 @@ Two honest qualifications, neither of which is a claim made on the resume:
 
 ## Testing
 
-**225 tests.** `make test`
+**235 tests.** `make test`
 
-### OCaml — 138 tests ([`engine/test/`](engine/test/))
+### OCaml — 148 tests ([`engine/test/`](engine/test/))
 
 | Suite | Tests | Covers |
 | --- | ---: | --- |
@@ -515,6 +575,7 @@ Two honest qualifications, neither of which is a claim made on the resume:
 | `execution` | 31 | Sizing, costs, **NAV reconciliation every bar**, interest accrual, engine-level negative control |
 | `csv_io` | 14 | Round-trips and parser strictness |
 | **`lookahead`** | **9** | **Truncation invariance, perturbation, next-bar, negative control** |
+| **`leakage`** | **10** | **Dose-zero anchors to production; each leak type moves the measured direction** |
 | `properties` | 20 | QCheck invariants (see below) |
 
 ### Python — 87 tests ([`python/tests/`](python/tests/))
@@ -568,6 +629,7 @@ engine/                     OCaml backtest engine
   lib/
     types.ml                Domain types; invalid states unrepresentable
     causal.ml               ← The no-lookahead enforcement mechanism
+    leakage.ml              ← Controlled leak injection; the calibration curves
     rolling.ml              Trailing-window statistics (views only)
     ols.ml                  Rolling hedge-ratio regression
     signal.ml               Spread, z-score, entry/exit decisions
@@ -577,7 +639,7 @@ engine/                     OCaml backtest engine
     backtest.ml             The event loop (timing = the causality guarantee)
     config.ml               Validated configuration
     csv_io.ml               Strict CSV interchange
-  bin/main.ml               CLI: backtest, sweep
+  bin/main.ml               CLI: backtest, sweep, calibrate
   test/                     136 tests
 
 python/statarb/

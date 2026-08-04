@@ -466,3 +466,92 @@ def exit_reason_markdown_table(metrics: dict[str, float]) -> str:
         n = int(metrics.get(key, 0))
         lines.append(f"| {label} | {n} | {n / total * 100:.1f}% |")
     return "\n".join(lines)
+
+
+def plot_leakage_calibration(calibration: pd.DataFrame, out_path: str | Path) -> Path:
+    """Plot the two leakage dose-response curves side by side.
+
+    The point of showing them together is the **asymmetry**: they run in
+    opposite directions. Timing-shift leakage (an off-by-one in a join) destroys
+    a mean-reversion strategy; outcome-filter leakage (a ``shift(-1)`` on a
+    feature) inflates it. Two different bugs, two different signatures.
+
+    The honest result is marked on both panels, because the reader's first
+    question is "where does the real backtest sit on this curve?"
+    """
+    out_path = Path(out_path)
+    shift = calibration[calibration["leak_type"] == "timing_shift"].sort_values("dose")
+    filt = calibration[calibration["leak_type"] == "outcome_filter"].sort_values("dose")
+
+    fig, (ax_shift, ax_filter) = plt.subplots(
+        1, 2, figsize=(11.5, 4.6), layout="constrained"
+    )
+
+    # --- Timing shift: harmful ---
+    ax_shift.plot(
+        shift["dose"], shift["sharpe_ratio"],
+        color=COLOR_DRAWDOWN, linewidth=1.8, marker="o", markersize=4,
+    )
+    ax_shift.axhline(0.0, color=COLOR_NEUTRAL, linewidth=0.9)
+    honest_shift = float(shift.iloc[0]["sharpe_ratio"])
+    ax_shift.scatter(
+        [0], [honest_shift], s=90, facecolor="white",
+        edgecolor=COLOR_EQUITY, linewidth=2, zorder=5,
+    )
+    ax_shift.annotate(
+        f"honest\n{honest_shift:+.2f}",
+        xy=(0, honest_shift), xytext=(1.4, honest_shift - 0.95),
+        fontsize=9, color=COLOR_EQUITY,
+        arrowprops={"arrowstyle": "-", "color": COLOR_EQUITY, "linewidth": 0.9},
+    )
+    ax_shift.set_xlabel("bars of timing shift (k)")
+    ax_shift.set_ylabel("Sharpe ratio")
+    ax_shift.set_title(
+        "Timing shift DESTROYS performance", loc="left", fontsize=11,
+        fontweight="600", color=COLOR_DRAWDOWN,
+    )
+    ax_shift.annotate(
+        "off-by-one in a resample or join;\nenters before the extreme it wants",
+        xy=(0.97, 0.72), xycoords="axes fraction", ha="right", va="top",
+        fontsize=8, color=COLOR_NEUTRAL,
+    )
+    _style_axes(ax_shift)
+
+    # --- Outcome filter: helpful (to the fraudster) ---
+    ax_filter.plot(
+        filt["dose"] * 100.0, filt["sharpe_ratio"],
+        color=COLOR_ENTRY, linewidth=1.8, marker="o", markersize=4,
+    )
+    honest_filter = float(filt.iloc[0]["sharpe_ratio"])
+    ax_filter.scatter(
+        [0], [honest_filter], s=90, facecolor="white",
+        edgecolor=COLOR_EQUITY, linewidth=2, zorder=5,
+    )
+    ax_filter.annotate(
+        f"honest {honest_filter:+.2f}",
+        xy=(0, honest_filter), xytext=(9, honest_filter - 0.008),
+        fontsize=9, color=COLOR_EQUITY,
+        arrowprops={"arrowstyle": "-", "color": COLOR_EQUITY, "linewidth": 0.9},
+    )
+    ax_filter.set_xlabel("% of losing trades skipped")
+    ax_filter.set_ylabel("Sharpe ratio")
+    ax_filter.set_title(
+        "Outcome filtering INFLATES it", loc="left", fontsize=11,
+        fontweight="600", color=COLOR_ENTRY,
+    )
+    ax_filter.annotate(
+        "shift(-1) on a feature, or same-bar fills;\nfewer trades, higher win rate",
+        xy=(0.97, 0.20), xycoords="axes fraction", ha="right", va="top",
+        fontsize=8, color=COLOR_NEUTRAL,
+    )
+    _style_axes(ax_filter)
+
+    fig.suptitle(
+        "What a known dose of lookahead bias does to the reported result",
+        fontsize=12.5, fontweight="600", x=0.01, ha="left",
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
